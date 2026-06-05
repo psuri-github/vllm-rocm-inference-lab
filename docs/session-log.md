@@ -21,6 +21,7 @@ Fixes: Changed Image deployed for container to openai-gpt-oss-rocm-7
  
 Did I destroy the Droplet? Yes 
 
+FUNDS REMAINING : $249.63
 
 ## Session 2 
  
@@ -98,4 +99,6 @@ Once memory free-up was confirmed remove the failed container with command "dock
 Fixes: invoked 02-run-vllm-rocm.sh script on HOST_PORT 8002 and freed GPU Memory by stopping rocm-gpt-oss and open-webui
  
 Did I destroy the Droplet? Yes 
+
+FUNDS REMAINING : $247.56
 
