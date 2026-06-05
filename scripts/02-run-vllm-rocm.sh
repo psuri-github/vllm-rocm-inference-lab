@@ -67,7 +67,7 @@ echo
 echo "Checking whether host port $HOST_PORT is available..."
 
 if ss -ltn | grep -q ":$HOST_PORT "; then
-  echo "ERROR: host port $HOST_PORT is already in use."
+  echo "ERROR: host port $HOST_PORT is still in use after removing $CONTAINER_NAME."
   echo "Try running with a different port, for example:"
   echo "  HOST_PORT=8002 ./02-run-vllm-rocm.sh"
   exit 1
