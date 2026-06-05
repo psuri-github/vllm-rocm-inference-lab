@@ -9,8 +9,9 @@ CONTAINER_PORT="${CONTAINER_PORT:-8000}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.60}"
 
 print_gpu_stats() {
-  echo
-  echo "GPU status:"
+  local label="${1:-GPU status:}"
+  echo 
+  echo "$label"
   rocm-smi
 }
 
@@ -22,6 +23,13 @@ echo "Container name: $CONTAINER_NAME"
 echo "Host port:      $HOST_PORT"
 echo "Container port: $CONTAINER_PORT"
 echo "GPU memory util: $GPU_MEMORY_UTILIZATION"
+
+echo
+echo "Checking Host Port Availability check script"
+if ! command -v ss >/dev/null 2>&1; then
+  echo "ERROR: ss command is missing. Cannot check host port availability."
+  exit 1
+fi
 
 echo
 echo "Checking Docker..."
@@ -68,14 +76,18 @@ echo "Checking whether host port $HOST_PORT is available..."
 
 if ss -ltn | grep -q ":$HOST_PORT "; then
   echo "ERROR: host port $HOST_PORT is still in use after removing $CONTAINER_NAME."
-  echo "Try running with a different port, for example:"
+  echo "Another process or container is using this port."
+  echo "To inspect:"
+  echo "  sudo ss -ltnp | grep ':$HOST_PORT'"
+  echo "  docker ps -a"
+  echo " Workaround : Try running with a different port, for example:"
   echo "  HOST_PORT=8002 ./02-run-vllm-rocm.sh"
   exit 1
 fi
 
 echo "OK: host port $HOST_PORT appears available."
 
-print_gpu_stats
+print_gpu_stats "GPU status before starting vLLM:"
 
 echo
 echo "Starting vLLM container..."
@@ -102,4 +114,4 @@ echo
 echo "To test health from the Droplet:"
 echo "  curl http://localhost:$HOST_PORT/health"
 
-print_gpu_stats
+print_gpu_stats "GPU status immediately after starting vLLM:"
