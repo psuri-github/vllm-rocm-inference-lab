@@ -25,7 +25,7 @@ echo "Container port: $CONTAINER_PORT"
 echo "GPU memory util: $GPU_MEMORY_UTILIZATION"
 
 echo
-echo "Checking Host Port Availability check script"
+echo "Checking whether 'ss' is available for host port inspection..."
 if ! command -v ss >/dev/null 2>&1; then
   echo "ERROR: ss command is missing. Cannot check host port availability."
   exit 1
