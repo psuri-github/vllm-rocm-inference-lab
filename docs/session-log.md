@@ -1,50 +1,87 @@
-# Sessions log
+# Session Log
 
-## Session 1 
- 
-Date: 
- 
-Droplet: 
-- Region: 
-- GPU: 
-- Image: 
-- Start time: 
-- End time: 
- 
-Commands run: 
- 
-Results: not able to run script 02 onwards 
- 
-Errors: No rocm tools found 
- 
-Fixes: Changed Image deployed for container to openai-gpt-oss-rocm-7 
- 
-Did I destroy the Droplet? Yes 
+This document captures hands-on test sessions for the `vllm-rocm-inference-lab` project.
 
-FUNDS REMAINING : $249.63
+The goal of these sessions is to learn how to run and operate vLLM on AMD ROCm GPU infrastructure, starting with a DigitalOcean AMD GPU Droplet and later moving toward Kubernetes-based deployment.
 
-## Session 2 
- 
-Date: 
- 
-Droplet: 
-- Region: 
-- GPU: 
-- Image: 
-- Start time: 
-- End time: 
- 
-Commands run: ran all script 00-* to 04* 
- 
-Results: after all intermediate errors fixed
+---
 
-oot@120b---ROCm-7-gpu-mi350x1-288gb-devcloud-atl1:~/vllm-rocm-inference-lab/scripts# curl -i http://localhost:8002/health
-HTTP/1.1 200 OK
-date: Fri, 05 Jun 2026 00:20:35 GMT
-server: uvicorn
-content-length: 0
+## Session 1: Initial AMD GPU Droplet Attempt
 
-root@120b---ROCm-7-gpu-mi350x1-288gb-devcloud-atl1:~/vllm-rocm-inference-lab/scripts# BASE_URL=http://localhost:8002 ./03-test-health.sh
+### Objective
+
+Create an AMD GPU Droplet, clone the project repository, and run the initial script sequence to verify the environment and start vLLM.
+
+### Result
+
+The session did not progress past the vLLM startup phase.
+
+### Issue Encountered
+
+The selected Droplet image did not include the expected ROCm command-line tools.
+
+The remote GPU verification script reported that ROCm tools such as `rocminfo` and `rocm-smi` were missing.
+
+### Fix / Follow-up
+
+For the next session, I changed the selected Droplet image to a ROCm-ready image:
+
+```text
+openai-gpt-oss-rocm-7
+```
+
+### Cleanup
+
+The Droplet was destroyed after the session.
+
+---
+
+## Session 2: Successful vLLM ROCm Startup and API Test
+
+### Objective
+
+Run the prepared scripts on an AMD GPU Droplet and verify that vLLM can serve an OpenAI-compatible API using the ROCm Docker image.
+
+### Environment
+
+```text
+Cloud provider: DigitalOcean
+GPU type: AMD MI350X
+GPU count: 1
+VRAM: 288 GB
+Image: openai-gpt-oss-rocm-7
+Repository: https://github.com/psuri-github/vllm-rocm-inference-lab
+```
+
+### Scripts Run
+
+The following scripts were run from the repository:
+
+```bash
+./00-local-preflight.sh
+./01-remote-gpu-checks.sh
+HOST_PORT=8002 ./02-run-vllm-rocm.sh
+BASE_URL=http://localhost:8002 ./03-test-health.sh
+BASE_URL=http://localhost:8002 ./04-test-chat-completion.sh
+```
+
+### Final Result
+
+The session was successful.
+
+vLLM started successfully in a ROCm Docker container, the health endpoint returned HTTP 200, and the OpenAI-compatible chat completion endpoint returned a valid model response.
+
+### Health Endpoint Result
+
+Command:
+
+```bash
+BASE_URL=http://localhost:8002 ./03-test-health.sh
+```
+
+Output:
+
+```text
 Checking vLLM health endpoint...
 Base URL: http://localhost:8002
 HTTP/1.1 200 OK
@@ -52,53 +89,245 @@ date: Fri, 05 Jun 2026 00:21:23 GMT
 server: uvicorn
 content-length: 0
 
-
 OK: vLLM health endpoint is reachable.
-root@120b---ROCm-7-gpu-mi350x1-288gb-devcloud-atl1:~/vllm-rocm-inference-lab/scripts# BASE_URL=http://localhost:8002 ./04-test-chat-completion.sh
+```
+
+### Chat Completion Result
+
+Command:
+
+```bash
+BASE_URL=http://localhost:8002 ./04-test-chat-completion.sh
+```
+
+Output summary:
+
+```text
 Testing vLLM chat completion endpoint...
 Base URL: http://localhost:8002
-Model:    Qwen/Qwen2.5-0.5B-Instruct
-{"id":"chatcmpl-9a1b79a43a0afc18","object":"chat.completion","created":1780618908,"model":"Qwen/Qwen2.5-0.5B-Instruct","choices":[{"index":0,"message":{"role":"assistant","content":"GPU (Graphics Processing Unit) inference refers to the use of graphics processing units (GPUs) for performing machine learning tasks on large datasets or complex models. GPUs are designed to handle parallel computations and can significantly speed up the training process for deep neural networks, which are commonly used in image recognition, computer vision, and other fields requiring high computational power.\n\nWhen using GPUs for inference, the model is first converted into a format that can be executed directly on the GPU. This involves converting the model's weights","refusal":null,"annotations":null,"audio":null,"function_call":null,"tool_calls":[],"reasoning":null},"logprobs":null,"finish_reason":"length","stop_reason":null,"token_ids":null,"routed_experts":null}],"service_tier":null,"system_fingerprint":"vllm-0.22.0-d254c4e0","usage":{"prompt_tokens":38,"total_tokens":138,"completion_tokens":100,"prompt_tokens_details":null},"prompt_logprobs":null,"prompt_token_ids":null,"prompt_text":null,"kv_transfer_params":null}
+Model: Qwen/Qwen2.5-0.5B-Instruct
+
 OK: chat completion request completed.
- 
- 
-Errors:
-FIRST ERROR
------------
-Initially could not connect to port 8000 since it was being used by another process. Discovered this from the logs [docker logs vllm-rocm]
-got below error docker: Error response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint vllm-rocm (66a9a68ac1cd4d67f443553f2efb52157e58131b6cd8362e0f0aab990082bb77): failed to bind host port for 0.0.0.0:8000:172.17.0.2:8000/tcp: address already in use
- 
-Debugging done:
-Ran below two commands to gather data
-1. sudo ss -ltnp | grep ':8000'
-2. docker ps -a
+```
 
-Those two commands told the docker is not a blank machine and it already had the below services running
-caddy          listening on host port 8000
-open-webui     mapped to 127.0.0.1:3000
-rocm-gpt-oss   mapped to 127.0.0.1:8001 -> container 8000
+The response came from:
 
-The script tried connecting 0.0.0.0:8000 -> container:8000 but Caddy was already listening on port 8000 Hence Docker could not use port 8000
+```text
+Qwen/Qwen2.5-0.5B-Instruct
+```
 
+served by:
 
-FIRST WORKAROUND : Do not kill Caddy, use port 8002 instead of 8000. So launched script with command "HOST_PORT=8002 ./02-run-vllm-rocm.sh"
+```text
+vLLM 0.22.0
+```
 
- 
-SECOND ERROR
-------------
-vLLM container reached the GPU, but failed because almost all GPU memory is already being used by another process/container. The root error from logs
-Free memory on device cuda:0 (12.38/287.69 GiB) on startup is less than desired GPU memory utilization (0.92, 264.67 GiB). Decrease GPU memory utilization or reduce GPU memory used by other processes.
+The API returned a valid `chat.completion` response with token usage information.
 
-Debugging Done
-From the logs it was evident that vLLM wanted about 264.67 GiB of GPU memory, but only 12.38 GiB was free. The container rocm-gpt-oss was already using the GPU
+---
 
-SECOND WORKAROUND : stop the existing model container rocm-gpt-oss and open-webui. After stopping the containers confirmed GPU memory is free by running command "rocm-smi"
+## Operational Issue 1: Host Port 8000 Already in Use
 
-Once memory free-up was confirmed remove the failed container with command "docker rm -f vllm-rocm" and then re-launch the container using command "HOST_PORT=8002 ./02-run-vllm-rocm.sh"
+### Symptom
 
-Fixes: invoked 02-run-vllm-rocm.sh script on HOST_PORT 8002 and freed GPU Memory by stopping rocm-gpt-oss and open-webui
- 
-Did I destroy the Droplet? Yes 
+The first attempt to start the vLLM container failed with a Docker networking error.
 
-FUNDS REMAINING : $247.56
+Error:
+
+```text
+docker: Error response from daemon: failed to set up container networking:
+driver failed programming external connectivity on endpoint vllm-rocm:
+failed to bind host port for 0.0.0.0:8000:172.17.0.2:8000/tcp:
+address already in use
+```
+
+### Diagnosis
+
+The vLLM startup script originally attempted to map:
+
+```text
+host port 8000 -> container port 8000
+```
+
+I checked which process was using port 8000:
+
+```bash
+sudo ss -ltnp | grep ':8000'
+```
+
+This showed:
+
+```text
+caddy listening on host port 8000
+```
+
+I also inspected existing containers:
+
+```bash
+docker ps -a
+```
+
+The Droplet was not a blank machine. It already had preconfigured services running, including:
+
+```text
+caddy         listening on host port 8000
+open-webui   mapped to 127.0.0.1:3000
+rocm-gpt-oss mapped to 127.0.0.1:8001 -> container 8000
+```
+
+### Root Cause
+
+The host port expected by my vLLM script was already occupied by Caddy.
+
+Docker could not bind another container to the same host port.
+
+### Workaround
+
+I did not stop Caddy.
+
+Instead, I relaunched my script using host port `8002`:
+
+```bash
+HOST_PORT=8002 ./02-run-vllm-rocm.sh
+```
+
+This mapped:
+
+```text
+Droplet localhost:8002 -> vLLM container port 8000
+```
+
+---
+
+## Operational Issue 2: GPU Memory Already Consumed
+
+### Symptom
+
+After resolving the port conflict, the vLLM container reached the GPU but failed during engine initialization.
+
+Root error from the logs:
+
+```text
+ValueError: Free memory on device cuda:0 (12.38/287.69 GiB) on startup
+is less than desired GPU memory utilization (0.92, 264.67 GiB).
+Decrease GPU memory utilization or reduce GPU memory used by other processes.
+```
+
+### Diagnosis
+
+The error indicated that vLLM wanted approximately:
+
+```text
+264.67 GiB
+```
+
+of GPU memory, but only:
+
+```text
+12.38 GiB
+```
+
+was free.
+
+This suggested that another process or container was already using most of the GPU memory.
+
+From the earlier `docker ps -a` output, the likely existing GPU-consuming container was:
+
+```text
+rocm-gpt-oss
+```
+
+### Fix
+
+I stopped the pre-existing model/UI containers:
+
+```bash
+docker stop rocm-gpt-oss
+docker stop open-webui
+```
+
+Then I checked GPU usage:
+
+```bash
+rocm-smi
+```
+
+The output showed the GPU was idle:
+
+```text
+VRAM%  0%
+GPU%   0%
+```
+
+I then removed the failed vLLM container:
+
+```bash
+docker rm -f vllm-rocm
+```
+
+and relaunched vLLM:
+
+```bash
+HOST_PORT=8002 ./02-run-vllm-rocm.sh
+```
+
+### Result
+
+After freeing GPU memory, the vLLM container started successfully.
+
+---
+
+## Key Learnings
+
+### 1. Preconfigured GPU images may not be blank machines
+
+The selected ROCm-ready image already had services running, including Caddy, Open WebUI, and a pre-existing model container.
+
+This affected both network port availability and GPU memory availability.
+
+### 2. Port conflicts are easy to diagnose with `ss`
+
+The command:
+
+```bash
+sudo ss -ltnp | grep ':8000'
+```
+
+quickly identified that Caddy was already listening on port 8000.
+
+### 3. GPU memory must be checked before starting vLLM
+
+vLLM may request a large fraction of GPU memory at startup.
+
+If another container is already using the GPU, vLLM can fail during engine initialization even though ROCm and Docker are working.
+
+### 4. `rocm-smi` is essential for AMD GPU debugging
+
+`rocm-smi` helped confirm when the GPU was idle and ready for the vLLM workload.
+
+### 5. Making ports configurable was useful
+
+Because `02-run-vllm-rocm.sh` supports `HOST_PORT`, I was able to work around the port conflict without editing the script.
+
+Example:
+
+```bash
+HOST_PORT=8002 ./02-run-vllm-rocm.sh
+```
+
+---
+
+## Session 2 Final Status
+
+```text
+ROCm tools available: yes
+Docker usable: yes
+AMD GPU visible: yes
+vLLM container started: yes
+Health endpoint working: yes
+Chat completion working: yes
+Droplet destroyed after session: yes
+```
+
+---
 
