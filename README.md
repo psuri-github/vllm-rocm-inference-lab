@@ -237,49 +237,85 @@ docs/runbook.md
 A typical session looks like:
 
 1. Clone the repository on the Droplet
+```text
 git clone https://github.com/psuri-github/vllm-rocm-inference-lab.git
 cd vllm-rocm-inference-lab
 chmod +x scripts/*.sh
+```
+
 2. Verify GPU and ROCm environment
+```text
 ./scripts/01-remote-gpu-checks.sh
+```
+
 3. Start vLLM
+```text
 HOST_PORT=8002 GPU_MEMORY_UTILIZATION=0.60 ./scripts/02-run-vllm-rocm.sh
+```
+
 4. Follow container logs
+```text
 docker logs -f vllm-rocm
+```
 
 Look for server readiness messages such as:
 
+```text
 Starting vLLM server on http://0.0.0.0:8000
 Application startup complete.
+```
+
 5. Check service status
+```text
 HOST_PORT=8002 ./scripts/05-vllm-status.sh
+```
+
 6. Test the health endpoint
+```text
 BASE_URL=http://localhost:8002 ./scripts/03-test-health.sh
+```
+
 7. Test chat completion
+```text
 BASE_URL=http://localhost:8002 ./scripts/04-test-chat-completion.sh
+```
+
 8. Run a single-request benchmark
+```text
 BASE_URL=http://localhost:8002 ./scripts/06-single-request-benchmark.sh
+```
+
 9. Inspect benchmark results
+```text
 cat benchmark-results/single-request-results.jsonl | jq .
+```
+
 10. Clean up the vLLM container
+```text
 ./scripts/07-cleanup-vllm.sh
+```
+
 11. Destroy the Droplet
 
 Destroy the GPU Droplet after the session to avoid continued billing.
 
-Benchmark Results
+### Benchmark Results
 
 The first benchmark milestone used repeated non-streaming /v1/chat/completions requests against:
 
+```text
 Qwen/Qwen2.5-0.5B-Instruct
+```
 
 Summarized results are documented in:
 
+```text
 docs/benchmark-results.md
+```
 
 The initial benchmark captures approximate end-to-end completion tokens/sec, not streaming time-to-first-token or sustained concurrent throughput.
 
-Operational Lessons
+### Operational Lessons
 
 This project has already surfaced several real-world operational details:
 
