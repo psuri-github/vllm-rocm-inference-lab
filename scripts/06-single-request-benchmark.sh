@@ -54,6 +54,8 @@ start_ns="$(date +%s%N)"
 if ! response="$(curl -sS "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "$request_body")"; then
+  end_ns="$(date +%s%N)"
+  elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
 
   echo
   echo "ERROR: request failed."
@@ -64,8 +66,14 @@ if ! response="$(curl -sS "$BASE_URL/v1/chat/completions" \
   echo "- SSH tunnel is not open if testing from your laptop."
   exit 1
 fi
-end_ns="$(date +%s%N)"
-elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
+
+if [[ -z "${end_ns+x}" ]]; then
+  end_ns="$(date +%s%N)"
+fi
+
+if [[ -z "${elapsed_ms+x}" ]]; then
+  elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
+fi
 
 if ! echo "$response" | jq . >/dev/null 2>&1; then
   echo "ERROR: response was not valid JSON."
