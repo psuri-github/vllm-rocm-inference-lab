@@ -99,7 +99,7 @@ else
   tokens_per_sec="unknown"
 fi
 
-result_row="$(jq -n \
+result_row="$(jq -c -n \
   --arg timestamp "$timestamp" \
   --arg base_url "$BASE_URL" \
   --arg requested_model "$MODEL" \
