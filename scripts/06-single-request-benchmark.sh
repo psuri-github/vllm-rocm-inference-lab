@@ -9,7 +9,6 @@ RESULTS_DIR="${RESULTS_DIR:-benchmark-results}"
 RESULTS_FILE="${RESULTS_FILE:-$RESULTS_DIR/single-request-results.jsonl}"
 
 echo "Running single-request benchmark..."
-echo "Host Port:   $HOST_PORT"
 echo "Base URL:   $BASE_URL"
 echo "Model:      $MODEL"
 echo "Max tokens: $MAX_TOKENS"
