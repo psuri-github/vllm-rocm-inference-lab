@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-HOST_PORT="${HOST_PORT:-8000}"
-BASE_URL="${BASE_URL:-http://localhost:$HOST_PORT}"
+BASE_URL="${BASE_URL:-http://localhost:8000}"
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
 MAX_TOKENS="${MAX_TOKENS:-100}"
 PROMPT="${PROMPT:-Explain GPU inference in one short paragraph.}"
@@ -55,8 +54,6 @@ start_ns="$(date +%s%N)"
 if ! response="$(curl -sS "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "$request_body")"; then
-  end_ns="$(date +%s%N)"
-  elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
 
   echo
   echo "ERROR: request failed."
@@ -67,6 +64,8 @@ if ! response="$(curl -sS "$BASE_URL/v1/chat/completions" \
   echo "- SSH tunnel is not open if testing from your laptop."
   exit 1
 fi
+end_ns="$(date +%s%N)"
+elapsed_ms="$(( (end_ns - start_ns) / 1000000 ))"
 
 if ! echo "$response" | jq . >/dev/null 2>&1; then
   echo "ERROR: response was not valid JSON."
