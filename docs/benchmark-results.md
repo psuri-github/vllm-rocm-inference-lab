@@ -31,3 +31,22 @@ All runs ended with `finish_reason=length`, meaning generation stopped because t
 
 The raw result file initially contained pretty-printed JSON records and later switched to compact JSONL after updating the benchmark script to use `jq -c -n`. Going forward, benchmark result records should be written as one JSON object per line.
 
+## Sequential Repeated-Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
+
+| Date       | Runs | Model                      | Prompt Tokens | Completion Tokens / Run | Avg Elapsed ms | Min ms | Max ms | Avg Completion Tokens/sec | Finish Reason |
+|------------|-----:|----------------------------|--------------:|------------------------:|---------------:|-------:|-------:|--------------------------:|---------------|
+| 2026-06-09 | 11   | Qwen/Qwen2.5-0.5B-Instruct |            38 |                     100 |         154.55 |    153 |    158 |                    647.23 |        length |
+
+### Notes
+
+This benchmark ran repeated sequential non-streaming `/v1/chat/completions` requests against the same vLLM ROCm endpoint.
+
+The model, prompt, `max_tokens`, and base URL were kept constant across all runs.
+
+The results were stable across 11 runs, with elapsed request time ranging from 153 ms to 158 ms. Each run generated 100 completion tokens and ended with `finish_reason=length`, meaning generation stopped because the configured `max_tokens=100` limit was reached.
+
+`completion_tokens_per_sec` is an approximate end-to-end value calculated as:
+
+```text
+completion_tokens / elapsed_seconds
+```
