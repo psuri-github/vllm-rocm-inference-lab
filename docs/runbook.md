@@ -30,6 +30,16 @@ chmod +x scripts/*.sh
 HOST_PORT=8002 GPU_MEMORY_UTILIZATION=0.60 ./scripts/02-run-vllm-rocm.sh
 ```
 
+## Follow Container logs 
+```bash
+docker logs -f vllm-rocm
+```
+Look for server readiness messages such as:
+```text
+Starting vLLM server on http://0.0.0.0:8002
+Application startup complete.
+```
+
 ## Check status
 ```bash
 HOST_PORT=8002 ./scripts/05-vllm-status.sh
