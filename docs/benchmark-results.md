@@ -50,3 +50,23 @@ The results were stable across 11 runs, with elapsed request time ranging from 1
 ```text
 completion_tokens / elapsed_seconds
 ```
+
+## Start-Gated Concurrent Request Benchmark
+
+| Date       | Concurrency | Successful Requests | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
+|------------|------------:|--------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
+| 2026-06-10 |           2 |                   2 |               0 |           173 |                     200 |                         1156.07 |                 152.00 |    152 |    152 |
+| 2026-06-10 |           4 |                   4 |               0 |           192 |                     400 |                         2083.33 |                 169.00 |    169 |    169 |
+| 2026-06-10 |           6 |                   6 |               0 |           228 |                     600 |                         2631.58 |                 204.33 |    204 |    205 |
+| 2026-06-10 |           8 |                   8 |               0 |           231 |                     800 |                         3463.20 |                 206.63 |    205 |    208 |
+| 2026-06-10 |          10 |                  10 |               0 |           217 |                    1000 |                         4608.29 |                 192.20 |    190 |    193 |
+
+### Notes
+
+This benchmark used a start-gated concurrent launcher. Worker processes were created first and then released together by creating a shared start-gate file. Each request wrote to a separate result file, and the parent benchmark script combined successful results after all workers completed.
+
+The same model, prompt, and `max_tokens=100` setting were used across all requests.
+
+The results show successful concurrent serving through concurrency 10 with no request failures. Aggregate completion throughput increased as concurrency increased, reaching approximately 4.6K completion tokens/sec at concurrency 10.
+
+Average per-request latency increased compared with sequential single-request runs, which is expected under concurrent load. This benchmark does not yet measure p95/p99 latency across repeated trials or sustained throughput over a longer time window.
