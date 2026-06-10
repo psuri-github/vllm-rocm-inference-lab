@@ -4,6 +4,7 @@ set -u
 BASE_URL="${BASE_URL:-http://localhost:8000}"
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
 MAX_TOKENS="${MAX_TOKENS:-100}"
+PROMPT_ID="${PROMPT_ID:-manual}"
 PROMPT="${PROMPT:-Explain GPU inference in one short paragraph.}"
 RESULTS_DIR="${RESULTS_DIR:-benchmark-results}"
 RESULTS_FILE="${RESULTS_FILE:-$RESULTS_DIR/single-request-results.jsonl}"
@@ -12,6 +13,7 @@ echo "Running single-request benchmark..."
 echo "Base URL:   $BASE_URL"
 echo "Model:      $MODEL"
 echo "Max tokens: $MAX_TOKENS"
+echo "Prompt ID:  $PROMPT_ID"
 echo "Prompt:     $PROMPT"
 echo "Result Dir: " $RESULTS_DIR
 
@@ -104,6 +106,7 @@ result_row="$(jq -c -n \
   --arg base_url "$BASE_URL" \
   --arg requested_model "$MODEL" \
   --arg response_model "$response_model" \
+  --arg prompt_id "$PROMPT_ID"
   --arg prompt "$PROMPT" \
   --arg max_tokens "$MAX_TOKENS" \
   --arg elapsed_ms "$elapsed_ms" \
@@ -117,6 +120,7 @@ result_row="$(jq -c -n \
     base_url: $base_url,
     requested_model: $requested_model,
     response_model: $response_model,
+    prompt_id: $prompt_id,
     prompt: $prompt,
     max_tokens: ($max_tokens | tonumber),
     elapsed_ms: ($elapsed_ms | tonumber),
