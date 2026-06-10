@@ -91,3 +91,33 @@ The run completed successfully for all 6 prompts with no failures. Prompt sizes 
 Most prompts ended with `finish_reason=length`, meaning generation reached the configured `max_tokens=100` limit. The summarization prompt returned `finish_reason=stop`.
 
 This benchmark is sequential. It measures different prompt shapes one after another, not concurrent mixed-prompt serving.
+
+## Mixed-Prompt Concurrent Benchmark
+
+| Date       | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
+|------------|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
+| 2026-06-10 |             12 |                  6 |                 2 |               0 |           234 |                    1200 |                         5128.21 |                 197.75 |    196 |    199 |
+
+
+### Per-Prompt Summary
+
+| Prompt ID      | Count | Avg Prompt Tokens | Avg Elapsed ms | Min ms | Max ms | Avg Completion Tokens/sec |
+|----------------|------:|------------------:|---------------:|-------:|-------:|--------------------------:|
+| code_explain   |     2 |                79 |          198.0 |    197 |    199 |                    505.06 |
+| debugging      |     2 |                51 |          198.0 |    197 |    199 |                    505.06 |
+| long_explain   |     2 |                53 |          197.5 |    196 |    199 |                    506.36 |
+| short_explain  |     2 |                38 |          198.5 |    198 |    199 |                    503.78 |
+| step_by_step   |     2 |                48 |          197.5 |    197 |    198 |                    506.33 |
+| summarization  |     2 |                88 |          197.0 |    197 |    197 |                    507.61 |
+
+### Notes
+
+This benchmark used a mixed-prompt concurrent workload. Six prompt definitions were loaded from `benchmarks/prompts.jsonl`, and 12 concurrent requests were launched using round-robin prompt assignment.
+
+Each prompt was used twice. All 12 requests completed successfully with no failures.
+
+The benchmark used a start-gate file to launch all workers first and release them together. Each worker wrote to a separate temporary result file, and the parent script combined successful results into a single JSONL output file.
+
+Compared with the sequential prompt-suite benchmark, per-request latency increased under concurrency, but aggregate completion throughput increased significantly. Prompt token counts ranged from 38 to 88, but request latency remained tightly grouped between 196 ms and 199 ms in this run.
+
+This benchmark measures an all-at-once mixed-prompt concurrency scenario. It does not yet measure sustained traffic over time or p95/p99 latency across repeated trials.
