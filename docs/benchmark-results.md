@@ -70,3 +70,24 @@ The same model, prompt, and `max_tokens=100` setting were used across all reques
 The results show successful concurrent serving through concurrency 10 with no request failures. Aggregate completion throughput increased as concurrency increased, reaching approximately 4.6K completion tokens/sec at concurrency 10.
 
 Average per-request latency increased compared with sequential single-request runs, which is expected under concurrent load. This benchmark does not yet measure p95/p99 latency across repeated trials or sustained throughput over a longer time window.
+
+## Sequential Prompt-Suite Benchmark
+
+| Date       | Prompt ID      | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
+|------------|----------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
+| 2026-06-10 | short_explain  |            38 |               100 |          138 |        135 |                740.74 | length        |
+| 2026-06-10 | long_explain   |            53 |               100 |          153 |        134 |                746.27 | length        |
+| 2026-06-10 | debugging      |            51 |               100 |          151 |        135 |                740.74 | length        |
+| 2026-06-10 | summarization  |            88 |               100 |          188 |        137 |                729.93 | stop          |
+| 2026-06-10 | code_explain   |            79 |               100 |          179 |        135 |                740.74 | length        |
+| 2026-06-10 | step_by_step   |            48 |               100 |          148 |        133 |                751.88 | length        |
+
+### Notes
+
+This benchmark ran one request per prompt from `benchmarks/prompts.jsonl` using the same model, endpoint, and `max_tokens=100`.
+
+The run completed successfully for all 6 prompts with no failures. Prompt sizes ranged from 38 to 88 prompt tokens, while elapsed request time remained tightly grouped between 133 ms and 137 ms.
+
+Most prompts ended with `finish_reason=length`, meaning generation reached the configured `max_tokens=100` limit. The summarization prompt returned `finish_reason=stop`.
+
+This benchmark is sequential. It measures different prompt shapes one after another, not concurrent mixed-prompt serving.
