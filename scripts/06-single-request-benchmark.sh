@@ -106,7 +106,7 @@ result_row="$(jq -c -n \
   --arg base_url "$BASE_URL" \
   --arg requested_model "$MODEL" \
   --arg response_model "$response_model" \
-  --arg prompt_id "$PROMPT_ID"
+  --arg prompt_id "$PROMPT_ID" \
   --arg prompt "$PROMPT" \
   --arg max_tokens "$MAX_TOKENS" \
   --arg elapsed_ms "$elapsed_ms" \
