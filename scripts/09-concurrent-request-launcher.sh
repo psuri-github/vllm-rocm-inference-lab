@@ -7,6 +7,7 @@ REQUEST_ID="${REQUEST_ID:?REQUEST_ID is required}"
 BASE_URL="${BASE_URL:-http://localhost:8000}"
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
 MAX_TOKENS="${MAX_TOKENS:-100}"
+PROMPT_ID="${PROMPT_ID:-manual}"
 PROMPT="${PROMPT:-Explain GPU inference in one short paragraph.}"
 RESULTS_DIR="${RESULTS_DIR:-benchmark-results}"
 RESULTS_FILE="${RESULTS_FILE:?RESULTS_FILE is required}"
@@ -32,6 +33,7 @@ echo "Start gate detected. Running request $REQUEST_ID..."
 BASE_URL="$BASE_URL" \
 MODEL="$MODEL" \
 MAX_TOKENS="$MAX_TOKENS" \
+PROMPT_ID="$PROMPT_ID" \
 PROMPT="$PROMPT" \
 RESULTS_DIR="$RESULTS_DIR" \
 RESULTS_FILE="$RESULTS_FILE" \
