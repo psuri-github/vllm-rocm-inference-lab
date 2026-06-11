@@ -245,7 +245,7 @@ For the default single prompt, increasing from `MAX_TOKENS=256` to `MAX_TOKENS=1
 
 With `MAX_TOKENS=1024`, all six prompts ended with `finish_reason=stop`.
 
-This makes `MAX_TOKENS=1024` the better setting for natural-completion benchmarking for the current prompt suite.
+This suggests that, for the current prompt suite, MAX_TOKENS=1024 is a more appropriate cap when the goal is to observe natural completion behavior rather than capped-output behavior.
 
 The longer prompts generated substantially more output than in the `MAX_TOKENS=256` run:
 
