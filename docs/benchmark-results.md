@@ -1,4 +1,34 @@
+These benchmarks were run as part of a hands-on vLLM ROCm inference lab using an AMD GPU Droplet.
+
+The goal is to understand serving behavior across different request patterns:
+
+* single request
+* repeated sequential requests
+* same-prompt concurrency
+* sequential prompt-suite requests
+* mixed-prompt concurrency
+* capped-output versus natural-completion behavior
+
+These are learning benchmarks for this specific setup. They should not be treated as general-purpose vLLM, AMD GPU, or ROCm performance claims.
+
+# Measurement Notes
+completion_tokens_per_sec is calculated per request as:
+
+completion_tokens / elapsed_seconds
+
+For concurrent benchmarks, aggregate_completion_tokens_per_sec is calculated as:
+
+total_completion_tokens / benchmark_wall_clock_seconds
+
+finish_reason=length means generation stopped because the request reached the configured max_tokens limit.
+
+finish_reason=stop means the model stopped naturally or reached a stop condition before hitting the configured max_tokens limit.
+
+The benchmark scripts use non-streaming /v1/chat/completions requests. These measurements do not capture streaming time-to-first-token, p95/p99 latency over repeated trials, or sustained production throughput.
+
 # Benchmark Results
+
+# MAX_TOKENS=100: Capped-Output Benchmarks
 
 ## Single Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
 
@@ -121,3 +151,144 @@ The benchmark used a start-gate file to launch all workers first and release the
 Compared with the sequential prompt-suite benchmark, per-request latency increased under concurrency, but aggregate completion throughput increased significantly. Prompt token counts ranged from 38 to 88, but request latency remained tightly grouped between 196 ms and 199 ms in this run.
 
 This benchmark measures an all-at-once mixed-prompt concurrency scenario. It does not yet measure sustained traffic over time or p95/p99 latency across repeated trials.
+
+# MAX_TOKENS=256: Higher-Cap Benchmarks
+
+## Single Request Benchmark
+
+| Date       | Max Tokens | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
+|------------|-----------:|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
+| 2026-06-11 |        256 |            38 |               232 |          270 |        291 |                797.25 | stop          |
+
+### Notes
+
+For the default single prompt, `MAX_TOKENS=256` was enough for the model to complete naturally. The response ended with `finish_reason=stop`.
+
+## Sequential Prompt-Suite Benchmark
+
+| Date       | Prompt ID     | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
+|------------|---------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
+| 2026-06-11 | short_explain |            38 |               232 |          270 |        291 |                797.25 | stop          |
+| 2026-06-11 | long_explain  |            53 |               256 |          309 |        318 |                805.03 | length        |
+| 2026-06-11 | debugging     |            51 |               256 |          307 |        317 |                807.57 | length        |
+| 2026-06-11 | summarization |            88 |                84 |          172 |        110 |                763.64 | stop          |
+| 2026-06-11 | code_explain  |            79 |               256 |          335 |        318 |                805.03 | length        |
+| 2026-06-11 | step_by_step  |            48 |               256 |          304 |        381 |                671.92 | length        |
+
+### Summary
+
+| Runs | Avg Elapsed ms | Min ms | Max ms | Avg Prompt Tokens | Avg Completion Tokens/sec |
+|-----:|---------------:|-------:|-------:|------------------:|--------------------------:|
+|    6 |         289.17 |    110 |    381 |              59.5 |                    775.07 |
+
+### Notes
+
+With `MAX_TOKENS=256`, two prompts stopped naturally:
+
+- `short_explain`
+- `summarization`
+
+Four prompts still reached the configured token limit:
+
+- `long_explain`
+- `debugging`
+- `code_explain`
+- `step_by_step`
+
+This means `MAX_TOKENS=256` is a higher-cap benchmark, but not a fully natural-completion benchmark for this prompt set.
+
+## Mixed-Prompt Concurrent Benchmark
+
+| Date       | Max Tokens | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
+|------------|-----------:|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
+| 2026-06-11 |        256 |             12 |                  6 |                 2 |               0 |           500 |                    2748 |                         5496.00 |                 420.33 |    223 |    470 |
+
+### Notes
+
+With `MAX_TOKENS=256`, mixed-prompt concurrency completed successfully with no failures.
+
+The run generated 2748 completion tokens across 12 concurrent requests and reached approximately 5496 aggregate completion tokens/sec.
+
+However, because several prompts still reached `finish_reason=length` in the sequential prompt-suite run, this setting should not be treated as fully natural-completion for this prompt set.
+
+# MAX_TOKENS=1024: Natural-Completion Benchmarks
+
+## Single Request Benchmark
+
+| Date       | Max Tokens | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
+|------------|-----------:|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
+| 2026-06-11 |       1024 |            38 |               232 |          270 |        292 |                794.52 | stop          |
+
+### Notes
+
+For the default single prompt, increasing from `MAX_TOKENS=256` to `MAX_TOKENS=1024` did not change the completion length. The model still stopped naturally at 232 completion tokens.
+
+## Sequential Prompt-Suite Benchmark
+
+| Date       | Prompt ID     | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
+|------------|---------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
+| 2026-06-11 | short_explain |            38 |               232 |          270 |        291 |                797.25 | stop          |
+| 2026-06-11 | long_explain  |            53 |               522 |          575 |        639 |                816.90 | stop          |
+| 2026-06-11 | debugging     |            51 |               626 |          677 |        764 |                819.37 | stop          |
+| 2026-06-11 | summarization |            88 |               100 |          188 |        129 |                775.19 | stop          |
+| 2026-06-11 | code_explain  |            79 |               403 |          482 |        495 |                814.14 | stop          |
+| 2026-06-11 | step_by_step  |            48 |               420 |          468 |        514 |                817.12 | stop          |
+
+### Summary
+
+| Runs | Avg Elapsed ms | Min ms | Max ms | Avg Prompt Tokens | Avg Completion Tokens/sec |
+|-----:|---------------:|-------:|-------:|------------------:|--------------------------:|
+|    6 |         472.00 |    129 |    764 |              59.5 |                    806.66 |
+
+### Notes
+
+With `MAX_TOKENS=1024`, all six prompts ended with `finish_reason=stop`.
+
+This makes `MAX_TOKENS=1024` the better setting for natural-completion benchmarking for the current prompt suite.
+
+The longer prompts generated substantially more output than in the `MAX_TOKENS=256` run:
+
+- `long_explain`: 522 completion tokens
+- `debugging`: 626 completion tokens
+- `code_explain`: 403 completion tokens
+- `step_by_step`: 420 completion tokens
+
+## Mixed-Prompt Concurrent Benchmark
+
+| Date       | Max Tokens | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
+|------------|-----------:|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
+| 2026-06-11 |       1024 |             12 |                  6 |                 2 |               0 |          1230 |                    4610 |                         3747.97 |                 696.67 |    154 |   1210 |
+
+### Notes
+
+With `MAX_TOKENS=1024`, the mixed-prompt concurrent benchmark generated 4610 completion tokens across 12 concurrent requests.
+
+Compared with the `MAX_TOKENS=256` mixed-prompt run:
+
+| Max Tokens | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms |
+|-----------:|--------------:|------------------------:|--------------------------------:|-----------------------:|
+|        256 |           500 |                    2748 |                         5496.00 |                 420.33 |
+|       1024 |          1230 |                    4610 |                         3747.97 |                 696.67 |
+
+The `MAX_TOKENS=1024` run produced longer natural completions, which increased wall-clock time and average request latency. Aggregate tokens/sec was lower than the `MAX_TOKENS=256` run because the workload included longer completions and a longer tail.
+
+This does not mean `MAX_TOKENS=1024` is worse. It means the benchmark workload changed from a partially capped workload to a more natural-completion workload.
+
+---
+
+# Current Recommendation
+
+Use different `MAX_TOKENS` settings depending on the benchmark goal:
+
+|                      Goal                             | Recommended Setting |
+|-------------------------------------------------------|---------------------|
+|                 Quick smoke test                      |  `MAX_TOKENS=100`   |
+|           Controlled capped-output benchmark          |  `MAX_TOKENS=100`   |
+|           Higher-cap exploratory benchmark            |  `MAX_TOKENS=256`   |
+| Natural-completion benchmark for current prompt suite |  `MAX_TOKENS=1024`  |
+
+For future prompt-suite and mixed-prompt benchmarks, prefer:
+
+```bash
+MAX_TOKENS=1024
+```
