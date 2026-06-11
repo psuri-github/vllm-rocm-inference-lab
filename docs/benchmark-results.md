@@ -1,3 +1,5 @@
+# Benchmark Results
+
 These benchmarks were run as part of a hands-on vLLM ROCm inference lab using an AMD GPU Droplet.
 
 The goal is to understand serving behavior across different request patterns:
@@ -11,12 +13,12 @@ The goal is to understand serving behavior across different request patterns:
 
 These are learning benchmarks for this specific setup. They should not be treated as general-purpose vLLM, AMD GPU, or ROCm performance claims.
 
-# Measurement Notes
-completion_tokens_per_sec is calculated per request as:
+## Measurement Notes
+`completion_tokens_per_sec` is calculated per request as:
 
 completion_tokens / elapsed_seconds
 
-For concurrent benchmarks, aggregate_completion_tokens_per_sec is calculated as:
+For concurrent benchmarks, `aggregate_completion_tokens_per_sec` is calculated as:
 
 total_completion_tokens / benchmark_wall_clock_seconds
 
@@ -26,9 +28,8 @@ finish_reason=stop means the model stopped naturally or reached a stop condition
 
 The benchmark scripts use non-streaming /v1/chat/completions requests. These measurements do not capture streaming time-to-first-token, p95/p99 latency over repeated trials, or sustained production throughput.
 
-# Benchmark Results
 
-# MAX_TOKENS=100: Capped-Output Benchmarks
+## MAX_TOKENS=100: Capped-Output Benchmarks
 
 ## Single Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
 
@@ -97,7 +98,7 @@ This benchmark used a start-gated concurrent launcher. Worker processes were cre
 
 The same model, prompt, and `max_tokens=100` setting were used across all requests.
 
-The results show successful concurrent serving through concurrency 10 with no request failures. Aggregate completion throughput increased as concurrency increased, reaching approximately 4.6K completion tokens/sec at concurrency 10.
+In this run, all requests completed successfully through concurrency 10 with no failures. The measured aggregate completion-token rate increased as concurrency increased, reaching approximately 4.6K completion tokens/sec for this specific model, prompt, machine, and benchmark harness.
 
 Average per-request latency increased compared with sequential single-request runs, which is expected under concurrent load. This benchmark does not yet measure p95/p99 latency across repeated trials or sustained throughput over a longer time window.
 
@@ -152,7 +153,7 @@ Compared with the sequential prompt-suite benchmark, per-request latency increas
 
 This benchmark measures an all-at-once mixed-prompt concurrency scenario. It does not yet measure sustained traffic over time or p95/p99 latency across repeated trials.
 
-# MAX_TOKENS=256: Higher-Cap Benchmarks
+## MAX_TOKENS=256: Higher-Cap Benchmarks
 
 ## Single Request Benchmark
 
@@ -207,11 +208,11 @@ This means `MAX_TOKENS=256` is a higher-cap benchmark, but not a fully natural-c
 
 With `MAX_TOKENS=256`, mixed-prompt concurrency completed successfully with no failures.
 
-The run generated 2748 completion tokens across 12 concurrent requests and reached approximately 5496 aggregate completion tokens/sec.
+In this run, the benchmark generated 2748 completion tokens across 12 concurrent requests, with a measured aggregate completion-token rate of approximately 5496 tokens/sec for this specific setup.
 
 However, because several prompts still reached `finish_reason=length` in the sequential prompt-suite run, this setting should not be treated as fully natural-completion for this prompt set.
 
-# MAX_TOKENS=1024: Natural-Completion Benchmarks
+## MAX_TOKENS=1024: Natural-Completion Benchmarks
 
 ## Single Request Benchmark
 
@@ -276,7 +277,7 @@ This does not mean `MAX_TOKENS=1024` is worse. It means the benchmark workload c
 
 ---
 
-# Current Recommendation
+## Current Recommendation
 
 Use different `MAX_TOKENS` settings depending on the benchmark goal:
 
@@ -292,3 +293,13 @@ For future prompt-suite and mixed-prompt benchmarks, prefer:
 ```bash
 MAX_TOKENS=1024
 ```
+
+when the goal is to observe natural completion behavior for the current prompt suite.
+
+For quick operational tests, continue to use smaller values such as:
+
+```bash
+MAX_TOKENS=100
+```
+
+to reduce runtime and cost.
