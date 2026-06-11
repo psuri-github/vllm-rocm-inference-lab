@@ -22,22 +22,22 @@ For concurrent benchmarks, `aggregate_completion_tokens_per_sec` is calculated a
 
 total_completion_tokens / benchmark_wall_clock_seconds
 
-finish_reason=length means generation stopped because the request reached the configured max_tokens limit.
+`finish_reason=length` means generation stopped because the request reached the configured `max_tokens` limit.
 
-finish_reason=stop means the model stopped naturally or reached a stop condition before hitting the configured max_tokens limit.
+`finish_reason=stop` means the model stopped naturally or reached a stop condition before hitting the configured `max_tokens` limit.
 
-The benchmark scripts use non-streaming /v1/chat/completions requests. These measurements do not capture streaming time-to-first-token, p95/p99 latency over repeated trials, or sustained production throughput.
+The benchmark scripts use non-streaming `/v1/chat/completions` requests. These measurements do not capture streaming time-to-first-token, p95/p99 latency over repeated trials, or sustained production throughput.
 
 
 ## MAX_TOKENS=100: Capped-Output Benchmarks
 
-## Single Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
+### Single Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
 
 | Date       | Runs | Model                      | Max Tokens | Prompt Tokens | Completion Tokens | Avg Elapsed ms | Min ms | Max ms | Avg Completion Tokens/sec | Finish Reason |
 | ---------- | ---: | -------------------------- | ---------: | ------------: | ----------------: | -------------: | -----: | -----: | ------------------------: | ------------- |
 | 2026-06-08 |   11 | Qwen/Qwen2.5-0.5B-Instruct |        100 |            38 |               100 |         134.09 |    133 |    135 |                    745.67 | length        |
 
-## Test Setup
+### Test Setup
 
 * Endpoint: `/v1/chat/completions`
 * Base URL: `http://localhost:8002`
@@ -46,7 +46,7 @@ The benchmark scripts use non-streaming /v1/chat/completions requests. These mea
 * `max_tokens`: `100`
 * Temperature: `0`
 
-## Notes
+#### Notes
 
 This benchmark used repeated non-streaming `/v1/chat/completions` requests against vLLM running with the ROCm Docker image on an AMD GPU Droplet.
 
@@ -62,13 +62,13 @@ All runs ended with `finish_reason=length`, meaning generation stopped because t
 
 The raw result file initially contained pretty-printed JSON records and later switched to compact JSONL after updating the benchmark script to use `jq -c -n`. Going forward, benchmark result records should be written as one JSON object per line.
 
-## Sequential Repeated-Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
+### Sequential Repeated-Request Benchmark: Qwen/Qwen2.5-0.5B-Instruct
 
 | Date       | Runs | Model                      | Prompt Tokens | Completion Tokens / Run | Avg Elapsed ms | Min ms | Max ms | Avg Completion Tokens/sec | Finish Reason |
 |------------|-----:|----------------------------|--------------:|------------------------:|---------------:|-------:|-------:|--------------------------:|---------------|
 | 2026-06-09 | 11   | Qwen/Qwen2.5-0.5B-Instruct |            38 |                     100 |         154.55 |    153 |    158 |                    647.23 |        length |
 
-### Notes
+#### Notes
 
 This benchmark ran repeated sequential non-streaming `/v1/chat/completions` requests against the same vLLM ROCm endpoint.
 
@@ -82,7 +82,7 @@ The results were stable across 11 runs, with elapsed request time ranging from 1
 completion_tokens / elapsed_seconds
 ```
 
-## Start-Gated Concurrent Request Benchmark
+### Start-Gated Concurrent Request Benchmark
 
 | Date       | Concurrency | Successful Requests | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
 |------------|------------:|--------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
@@ -92,7 +92,7 @@ completion_tokens / elapsed_seconds
 | 2026-06-10 |           8 |                   8 |               0 |           231 |                     800 |                         3463.20 |                 206.63 |    205 |    208 |
 | 2026-06-10 |          10 |                  10 |               0 |           217 |                    1000 |                         4608.29 |                 192.20 |    190 |    193 |
 
-### Notes
+#### Notes
 
 This benchmark used a start-gated concurrent launcher. Worker processes were created first and then released together by creating a shared start-gate file. Each request wrote to a separate result file, and the parent benchmark script combined successful results after all workers completed.
 
@@ -102,7 +102,7 @@ In this run, all requests completed successfully through concurrency 10 with no 
 
 Average per-request latency increased compared with sequential single-request runs, which is expected under concurrent load. This benchmark does not yet measure p95/p99 latency across repeated trials or sustained throughput over a longer time window.
 
-## Sequential Prompt-Suite Benchmark
+### Sequential Prompt-Suite Benchmark
 
 | Date       | Prompt ID      | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
 |------------|----------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
@@ -113,7 +113,7 @@ Average per-request latency increased compared with sequential single-request ru
 | 2026-06-10 | code_explain   |            79 |               100 |          179 |        135 |                740.74 | length        |
 | 2026-06-10 | step_by_step   |            48 |               100 |          148 |        133 |                751.88 | length        |
 
-### Notes
+#### Notes
 
 This benchmark ran one request per prompt from `benchmarks/prompts.jsonl` using the same model, endpoint, and `max_tokens=100`.
 
@@ -123,14 +123,14 @@ Most prompts ended with `finish_reason=length`, meaning generation reached the c
 
 This benchmark is sequential. It measures different prompt shapes one after another, not concurrent mixed-prompt serving.
 
-## Mixed-Prompt Concurrent Benchmark
+### Mixed-Prompt Concurrent Benchmark
 
 | Date       | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
 |------------|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
 | 2026-06-10 |             12 |                  6 |                 2 |               0 |           234 |                    1200 |                         5128.21 |                 197.75 |    196 |    199 |
 
 
-### Per-Prompt Summary
+#### Per-Prompt Summary
 
 | Prompt ID      | Count | Avg Prompt Tokens | Avg Elapsed ms | Min ms | Max ms | Avg Completion Tokens/sec |
 |----------------|------:|------------------:|---------------:|-------:|-------:|--------------------------:|
@@ -141,7 +141,7 @@ This benchmark is sequential. It measures different prompt shapes one after anot
 | step_by_step   |     2 |                48 |          197.5 |    197 |    198 |                    506.33 |
 | summarization  |     2 |                88 |          197.0 |    197 |    197 |                    507.61 |
 
-### Notes
+#### Notes
 
 This benchmark used a mixed-prompt concurrent workload. Six prompt definitions were loaded from `benchmarks/prompts.jsonl`, and 12 concurrent requests were launched using round-robin prompt assignment.
 
@@ -155,17 +155,17 @@ This benchmark measures an all-at-once mixed-prompt concurrency scenario. It doe
 
 ## MAX_TOKENS=256: Higher-Cap Benchmarks
 
-## Single Request Benchmark
+### Single Request Benchmark
 
 | Date       | Max Tokens | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
 |------------|-----------:|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
 | 2026-06-11 |        256 |            38 |               232 |          270 |        291 |                797.25 | stop          |
 
-### Notes
+#### Notes
 
 For the default single prompt, `MAX_TOKENS=256` was enough for the model to complete naturally. The response ended with `finish_reason=stop`.
 
-## Sequential Prompt-Suite Benchmark
+### Sequential Prompt-Suite Benchmark
 
 | Date       | Prompt ID     | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
 |------------|---------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
@@ -176,13 +176,13 @@ For the default single prompt, `MAX_TOKENS=256` was enough for the model to comp
 | 2026-06-11 | code_explain  |            79 |               256 |          335 |        318 |                805.03 | length        |
 | 2026-06-11 | step_by_step  |            48 |               256 |          304 |        381 |                671.92 | length        |
 
-### Summary
+#### Summary
 
 | Runs | Avg Elapsed ms | Min ms | Max ms | Avg Prompt Tokens | Avg Completion Tokens/sec |
 |-----:|---------------:|-------:|-------:|------------------:|--------------------------:|
 |    6 |         289.17 |    110 |    381 |              59.5 |                    775.07 |
 
-### Notes
+#### Notes
 
 With `MAX_TOKENS=256`, two prompts stopped naturally:
 
@@ -198,13 +198,13 @@ Four prompts still reached the configured token limit:
 
 This means `MAX_TOKENS=256` is a higher-cap benchmark, but not a fully natural-completion benchmark for this prompt set.
 
-## Mixed-Prompt Concurrent Benchmark
+### Mixed-Prompt Concurrent Benchmark
 
 | Date       | Max Tokens | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
 |------------|-----------:|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
 | 2026-06-11 |        256 |             12 |                  6 |                 2 |               0 |           500 |                    2748 |                         5496.00 |                 420.33 |    223 |    470 |
 
-### Notes
+#### Notes
 
 With `MAX_TOKENS=256`, mixed-prompt concurrency completed successfully with no failures.
 
@@ -214,17 +214,17 @@ However, because several prompts still reached `finish_reason=length` in the seq
 
 ## MAX_TOKENS=1024: Natural-Completion Benchmarks
 
-## Single Request Benchmark
+### Single Request Benchmark
 
 | Date       | Max Tokens | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
 |------------|-----------:|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
 | 2026-06-11 |       1024 |            38 |               232 |          270 |        292 |                794.52 | stop          |
 
-### Notes
+#### Notes
 
 For the default single prompt, increasing from `MAX_TOKENS=256` to `MAX_TOKENS=1024` did not change the completion length. The model still stopped naturally at 232 completion tokens.
 
-## Sequential Prompt-Suite Benchmark
+### Sequential Prompt-Suite Benchmark
 
 | Date       | Prompt ID     | Prompt Tokens | Completion Tokens | Total Tokens | Elapsed ms | Completion Tokens/sec | Finish Reason |
 |------------|---------------|--------------:|------------------:|-------------:|-----------:|----------------------:|---------------|
@@ -235,13 +235,13 @@ For the default single prompt, increasing from `MAX_TOKENS=256` to `MAX_TOKENS=1
 | 2026-06-11 | code_explain  |            79 |               403 |          482 |        495 |                814.14 | stop          |
 | 2026-06-11 | step_by_step  |            48 |               420 |          468 |        514 |                817.12 | stop          |
 
-### Summary
+#### Summary
 
 | Runs | Avg Elapsed ms | Min ms | Max ms | Avg Prompt Tokens | Avg Completion Tokens/sec |
 |-----:|---------------:|-------:|-------:|------------------:|--------------------------:|
 |    6 |         472.00 |    129 |    764 |              59.5 |                    806.66 |
 
-### Notes
+#### Notes
 
 With `MAX_TOKENS=1024`, all six prompts ended with `finish_reason=stop`.
 
@@ -254,13 +254,13 @@ The longer prompts generated substantially more output than in the `MAX_TOKENS=2
 - `code_explain`: 403 completion tokens
 - `step_by_step`: 420 completion tokens
 
-## Mixed-Prompt Concurrent Benchmark
+### Mixed-Prompt Concurrent Benchmark
 
 | Date       | Max Tokens | Total Requests | Prompt Definitions | Requests / Prompt | Failed Requests | Wall-clock ms | Total Completion Tokens | Aggregate Completion Tokens/sec | Avg Request Latency ms | Min ms | Max ms |
 |------------|-----------:|---------------:|-------------------:|------------------:|----------------:|--------------:|------------------------:|--------------------------------:|-----------------------:|-------:|-------:|
 | 2026-06-11 |       1024 |             12 |                  6 |                 2 |               0 |          1230 |                    4610 |                         3747.97 |                 696.67 |    154 |   1210 |
 
-### Notes
+#### Notes
 
 With `MAX_TOKENS=1024`, the mixed-prompt concurrent benchmark generated 4610 completion tokens across 12 concurrent requests.
 
