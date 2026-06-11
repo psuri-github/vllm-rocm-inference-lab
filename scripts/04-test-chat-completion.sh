@@ -3,10 +3,11 @@ set -u
 
 BASE_URL="${BASE_URL:-http://localhost:8000}"
 MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
-
+MAX_TOKENS="${MAX_TOKENS:-100}"
 echo "Testing vLLM chat completion endpoint..."
 echo "Base URL: $BASE_URL"
 echo "Model:    $MODEL"
+echo "Max Tokens:    $MAX_TOKENS"
 
 if curl "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
@@ -18,7 +19,7 @@ if curl "$BASE_URL/v1/chat/completions" \
         \"content\": \"Explain GPU inference in one short paragraph.\"
       }
     ],
-    \"max_tokens\": 100,
+    \"max_tokens\": $MAX_TOKENS,
     \"temperature\": 0
   }"; then
   echo
