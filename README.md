@@ -1,56 +1,200 @@
 # vLLM ROCm Inference Lab
 
-This project is a hands-on learning lab for deploying and operating **vLLM on AMD ROCm GPU infrastructure**.
+Hands-on lab for deploying and operating **vLLM on AMD ROCm GPU infrastructure**.
 
-The first milestone uses a **DigitalOcean AMD GPU Droplet** to learn how to verify GPU access, run a ROCm-compatible vLLM container, and test the OpenAI-compatible API exposed by vLLM.
+This repository is designed for AI infrastructure engineers, MLOps/platform operators, and ROCm/AMD GPU teams who want to validate an OpenAI-compatible inference stack on AMD GPU cloud resources.
 
-The project intentionally starts with Docker-based serving before moving into deeper topics such as benchmarking, observability, and possible Kubernetes-based deployment
+## What this repo does
 
-## Project Goals
+This project helps you:
 
-This project is intended to build practical understanding of:
+* validate AMD ROCm GPU readiness on a remote Droplet
+* launch a ROCm-compatible vLLM Docker container
+* verify OpenAI-compatible inference endpoints (`/health`, `/v1/models`, `/v1/chat/completions`)
+* run a simple benchmark and collect result artifacts
+* follow a cost-safe workflow for ephemeral GPU cloud resources
 
-* AMD GPU infrastructure for LLM inference
-* ROCm runtime verification
-* Docker-based vLLM serving
-* OpenAI-compatible inference APIs
-* Safe workflows for ephemeral GPU cloud resources
-* Operational debugging of model-serving environments
-* Basic inference benchmarking
-* Future observability and serving infrastructure experiments
+## Audience
 
-## Current Scope
+This repo is most useful for:
 
-The current scope focuses on running and measuring vLLM directly on an AMD GPU Droplet using Docker.
+* infrastructure engineers evaluating ROCm-based inference
+* platform teams validating GPU access and container runtime behavior
+* operators testing vendor-specific GPU enablement
+* engineers exploring Docker-based vLLM serving before moving to orchestration
 
-The project currently includes scripts to:
+## Current scope
 
-* Check required local tools
-* Verify ROCm and AMD GPU access on a remote Droplet
-* Start a vLLM ROCm Docker container
-* Test the vLLM health endpoint
-* Send a chat completion request to the vLLM OpenAI-compatible API
-* Check vLLM container, endpoint, and GPU status
-* Run a single-request benchmark and save results
-* Clean up the vLLM container created by this project
+The current scope focuses on direct Docker-based serving on an AMD GPU Droplet. It is intentionally not a full production Kubernetes deployment, but it covers practical operational validation, endpoint testing, and basic benchmark capture.
 
 ## Why AMD ROCm?
 
-Most GPU inference tutorials assume NVIDIA CUDA. This project intentionally explores the AMD ROCm path using AMD MI300X infrastructure.
+Most GPU inference tutorials assume NVIDIA CUDA. This lab intentionally explores the AMD ROCm path using AMD MI300X infrastructure and Docker.
 
-This helps build a better understanding of vendor-specific GPU enablement, including:
+Key platform topics include:
 
-* AMD ROCm runtime
-* AMD GPU device files such as `/dev/kfd` and `/dev/dri`
+* AMD ROCm runtime verification
+* AMD device files such as `/dev/kfd` and `/dev/dri`
 * ROCm-compatible vLLM Docker images
 * GPU access from inside containers
-* Operational differences between blank machines and preconfigured GPU images
+* operational checks on blank versus preconfigured GPU images
 
-## Repository Structure
+## Prerequisites
+
+* AMD GPU Droplet or VM with ROCm-compatible OS/image
+* Docker installed and usable by the current user
+* SSH access to the GPU host
+* local tools: `ssh`, `scp`, `curl`, `git`
+* host port availability for the vLLM service (default `8002`)
+* optional: `jq` for inspecting JSON benchmark output
+
+## Operational workflow
+
+1. clone the repo on the GPU host
+2. verify ROCm and GPU access
+3. launch the vLLM ROCm container
+4. verify health and inference endpoints
+5. run benchmark tests
+6. inspect results and clean up
+7. destroy the GPU Droplet
+
+## Quickstart
+
+```bash
+git clone https://github.com/psuri-github/vllm-rocm-inference-lab.git
+cd vllm-rocm-inference-lab
+chmod +x scripts/*.sh
+./scripts/01-remote-gpu-checks.sh
+HOST_PORT=8002 GPU_MEMORY_UTILIZATION=0.60 ./scripts/02-run-vllm-rocm.sh
+BASE_URL=http://localhost:8002 ./scripts/06-single-request-benchmark.sh
+./scripts/07-cleanup-vllm.sh
+```
+
+For the full step-by-step workflow, see `docs/runbook.md`.
+
+## Scripts
+
+### `00-local-preflight.sh`
+
+Run locally to confirm the workstation has the tools needed to use the lab.
+
+Checks:
+
+* `ssh`
+* `scp`
+* `curl`
+* `git`
+
+### `01-remote-gpu-checks.sh`
+
+Run on the AMD GPU Droplet.
+
+Validates:
+
+* Bash version
+* `rocm-smi`
+* Docker installation and usability
+* GPU device files `/dev/kfd` and `/dev/dri`
+* optional `rocminfo` if present
+
+### `02-run-vllm-rocm.sh`
+
+Run on the Droplet to start the ROCm-compatible vLLM container.
+
+Defaults:
+
+* Docker image: `vllm/vllm-openai-rocm:latest`
+* model: `Qwen/Qwen2.5-0.5B-Instruct`
+
+Example:
+
+```bash
+HOST_PORT=8002 GPU_MEMORY_UTILIZATION=0.60 ./scripts/02-run-vllm-rocm.sh
+```
+
+### `03-test-health.sh`
+
+Checks the vLLM `/health` endpoint.
+
+Example:
+
+```bash
+BASE_URL=http://localhost:8002 ./scripts/03-test-health.sh
+```
+
+This can run on the Droplet or locally with SSH port forwarding.
+
+### `04-test-chat-completion.sh`
+
+Sends a sample request to `/v1/chat/completions` to verify inference.
+
+### `05-vllm-status.sh`
+
+Collects service and GPU status information.
+
+Reports:
+
+* container existence
+* recent container logs
+* `/health` status
+* `/v1/models` status
+* GPU status via `rocm-smi`
+
+Example:
+
+```bash
+HOST_PORT=8002 ./scripts/05-vllm-status.sh
+```
+
+### `06-single-request-benchmark.sh`
+
+Runs a single OpenAI-compatible chat benchmark request and captures timing and token metrics.
+
+Outputs:
+
+* `benchmark-results/single-request-results.jsonl`
+
+Example:
+
+```bash
+BASE_URL=http://localhost:8002 ./scripts/06-single-request-benchmark.sh
+```
+
+### `07-cleanup-vllm.sh`
+
+Stops and removes only the `vllm-rocm` container created by this project.
+
+This avoids deleting other preconfigured containers on ROCm-ready images.
+
+## Cost safety
+
+GPU Droplets are billed while they exist, even if powered off.
+
+Recommended workflow:
+
+* create GPU Droplet
+* run verification, serving, and benchmark tests
+* save results and notes
+* clean up project-created containers
+* destroy the Droplet
+
+Do not rely on a powered-off Droplet to stop billing.
+
+## Benchmarking and results
+
+This lab captures basic inference performance and operational validation rather than exhaustive benchmarking.
+
+Benchmark results are summarized in `docs/benchmark-results.md`.
+
+Benchmark prompts and test configuration are stored in `benchmarks/prompts.jsonl`.
+
+## Repository structure
 
 ```text
 .
 ├── README.md
+├── benchmarks
+│   └── prompts.jsonl
 ├── docs
 │   ├── benchmark-plan.md
 │   ├── benchmark-results.md
@@ -67,157 +211,16 @@ This helps build a better understanding of vendor-specific GPU enablement, inclu
     └── 07-cleanup-vllm.sh
 ```
 
-## Scripts
+## Next steps
 
-### `00-local-preflight.sh`
+Future work may include:
 
-Runs on the local development machine.
+* broader observability and metrics collection
+* Kubernetes or orchestration-based deployment
+* multi-node inference validation
+* expanded benchmark suites
+* more extensive ROCm image compatibility testing
 
-Checks whether basic tools are available:
-
-* `ssh`
-* `scp`
-* `curl`
-* `git`
-
-These tools are needed to connect to the GPU Droplet, copy files, test endpoints, and manage the project through GitHub.
-
-### `01-remote-gpu-checks.sh`
-
-Runs on the AMD GPU Droplet.
-
-Checks whether the Droplet has the expected GPU and runtime environment:
-
-* Bash version
-* rocm-smi
-* Docker
-* Docker usability
-* /dev/kfd
-* /dev/dri
-
-The script also checks for rocminfo when available. Some ROCm images may not include rocminfo, but the project has successfully run vLLM with rocm-smi, Docker, AMD device files, and the ROCm-compatible vLLM container.
-
-### `02-run-vllm-rocm.sh`
-
-Runs on the AMD GPU Droplet.
-
-Starts the vLLM ROCm Docker container after verifying that Docker and ROCm/GPU prerequisites are present.
-
-The script supports configurable runtime values:
-
-```bash
-HOST_PORT=8002 GPU_MEMORY_UTILIZATION=0.60 ./scripts/02-run-vllm-rocm.sh
-```
-
-The default model is:
-
-```text
-Qwen/Qwen2.5-0.5B-Instruct
-```
-
-The default Docker image is:
-
-```text
-vllm/vllm-openai-rocm:latest
-```
-
-The script includes operational preflight checks for:
-
-* Docker availability
-* Docker usability
-* AMD GPU device files
-* host port conflicts
-* GPU status before and immediately after launch
-
-### `03-test-health.sh`
-
-Tests the vLLM health endpoint:
-
-```text
-/health
-```
-Example:
-
-```bash
-BASE_URL=http://localhost:8002 ./scripts/03-test-health.sh
-```
-
-This script can run either on the Droplet or on the local machine when using SSH port forwarding.
-
-### `04-test-chat-completion.sh`
-
-Sends a test request to the vLLM OpenAI-compatible chat completions endpoint:
-
-```text
-/v1/chat/completions
-```
-
-This verifies that the model server is reachable and able to generate a response.
-
-### `05-vllm-status.sh`
-
-Checks the current operational status of the vLLM service.
-
-It reports:
-
-* whether the vllm-rocm container exists
-* recent container logs
-* /health endpoint status
-* /v1/models endpoint status
-* GPU status using rocm-smi, when available
-
-Example:
-```bash
-HOST_PORT=8002 ./scripts/05-vllm-status.sh
-```
-
-### `06-single-request-benchmark.sh`
-
-Runs a single non-streaming /v1/chat/completions benchmark request.
-
-It captures:
-
-* elapsed request time
-* prompt token count
-* completion token count
-* total token count
-* finish reason
-* approximate completion tokens/sec
-
-Example:
-
-```bash
-BASE_URL=http://localhost:8002 ./scripts/06-single-request-benchmark.sh
-```
-Successful results are written to:
-
-```text
-benchmark-results/single-request-results.jsonl
-```
-
-Raw benchmark result files are ignored by Git. Summarized results are captured in:
-
-```text
-docs/benchmark-results.md
-```
-
-### `07-cleanup-vllm.sh`
-
-Stops and removes only the vLLM container created by this project.
-
-By default, it targets:
-
-```text
-vllm-rocm
-```
-
-It does not remove preconfigured containers that may be present on DigitalOcean ROCm images, such as rocm, open-webui, or other provider-provided containers.
-
-## Cost Safety
-
-GPU Droplets are billed while they exist, even if they are powered off.
-
-The intended workflow is:
 
 ```text
 Create GPU Droplet
