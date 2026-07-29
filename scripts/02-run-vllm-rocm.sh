@@ -7,6 +7,9 @@ CONTAINER_NAME="${CONTAINER_NAME:-vllm-rocm}"
 HOST_PORT="${HOST_PORT:-8000}"
 CONTAINER_PORT="${CONTAINER_PORT:-8000}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.60}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
+PIPELINE_PARALLEL_SIZE="${PIPELINE_PARALLEL_SIZE:-1}"
+DATA_PARALLEL_SIZE="${DATA_PARALLEL_SIZE:-1}"
 
 print_gpu_stats() {
   local label="${1:-GPU status:}"
@@ -23,6 +26,9 @@ echo "Container name: $CONTAINER_NAME"
 echo "Host port:      $HOST_PORT"
 echo "Container port: $CONTAINER_PORT"
 echo "GPU memory util: $GPU_MEMORY_UTILIZATION"
+echo "Tensor Parallel Size : $TENSOR_PARALLEL_SIZE"
+echo "Pipeline Parallel Size : $PIPELINE_PARALLEL_SIZE"
+echo "Data Parallel Size : $DATA_PARALLEL_SIZE"
 
 echo
 echo "Checking whether 'ss' is available for host port inspection..."
