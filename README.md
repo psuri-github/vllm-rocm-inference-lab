@@ -58,6 +58,39 @@ Key platform topics include:
 6. inspect results and clean up
 7. destroy the GPU Droplet
 
+## Deployment paths
+
+This lab now has two deployment paths:
+
+### Path 1: Direct Docker-based serving
+
+The original workflow runs vLLM directly as a ROCm-compatible Docker container on an AMD GPU Droplet.
+
+This path is useful for validating:
+
+* ROCm runtime readiness
+* AMD GPU device access
+* vLLM container startup
+* OpenAI-compatible endpoint behavior
+* benchmark and metrics collection
+
+### Path 2: Kubernetes/K3s-based serving
+
+The Kubernetes path deploys vLLM into a K3s cluster using standard Kubernetes resources.
+
+The manifests are stored under `kubernetes/` and include:
+
+* Namespace
+* PersistentVolumeClaim for Hugging Face model cache
+* Deployment for the vLLM server
+* ClusterIP Service for in-cluster access
+* GPU test pod
+* K3s lab cheatsheet
+
+This path is useful for understanding how Kubernetes handles GPU-backed inference workloads using generic primitives such as Deployments, Services, PVCs, probes, and device-plugin-managed resources.
+
+It is not a custom Kubernetes operator yet. The goal is to establish the foundation for understanding where generic Kubernetes reconciliation ends and inference-aware operator logic could begin.
+
 ## Quickstart
 
 ```bash
@@ -360,6 +393,20 @@ Milestone 3:
 * [x] Write benchmark results to JSONL
 * [x] Summarize first benchmark result
 
+Milestone 4:
+* [x] Install and validate K3s cluster on the AMD GPU Droplet
+* [x] Install the AMD GPU Plugin
+* [x] Verify that Kubernetes exposes the GPU as amd.com/gpu
+* [x] Add a GPU test pod to confirm /dev/kfd and /dev/dri access inside Kubernetes
+* [x] Create a dedicated vllm namespace
+* [x] Add a PVC for Hugging Face Model cache storage
+* [x] Add a vLLM deployment using the ROCm-compatible vLLM image
+* [x] Request one AMD GPU from Kubernetes using amd.com/gpu: "1"
+* [x] Add startup, readiness, and liveness probes against the vLLM /health endpoint
+* [x] Add a ClusterIP Service for in-cluster access to the vLLM server
+* [x] Verify that the vLLM service could serve OpenAI-compatible inference requests from inside the cluster
+* [x] Document the end-to-end K3s workflow in a Kubernetes lab cheatsheet 
+
 Possible Future Milestones
 * Prompt-suite benchmarking
 * Run a small set of repeatable prompts
@@ -373,7 +420,6 @@ Possible Future Milestones
 * Explore vLLM /metrics
 * Identify useful inference-serving metrics
 * Document GPU and service-level signals
-* Kubernetes
 
 Possible future direction if GPU credits, capacity, and project scope allow:
 
