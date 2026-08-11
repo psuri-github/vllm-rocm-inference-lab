@@ -249,7 +249,6 @@ Benchmark prompts and test configuration are stored in `benchmarks/prompts.jsonl
 Future work may include:
 
 * broader observability and metrics collection
-* Kubernetes or orchestration-based deployment
 * multi-node inference validation
 * expanded benchmark suites
 * more extensive ROCm image compatibility testing
@@ -421,12 +420,6 @@ Possible Future Milestones
 * Identify useful inference-serving metrics
 * Document GPU and service-level signals
 
-Possible future direction if GPU credits, capacity, and project scope allow:
-
-* Run vLLM under k3s or managed Kubernetes
-* Explore GPU allocation
-* Add Kubernetes service exposure
-* Investigate observability and autoscaling patterns
 
 ## Notes
 This is a learning project. The goal is to understand each step rather than hide everything behind a prebuilt deployment.
