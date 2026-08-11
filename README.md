@@ -25,7 +25,12 @@ This repo is most useful for:
 
 ## Current scope
 
-The current scope focuses on direct Docker-based serving on an AMD GPU Droplet. It is intentionally not a full production Kubernetes deployment, but it covers practical operational validation, endpoint testing, and basic benchmark capture.
+The current scope covers two stages of the lab:
+
+* direct Docker-based vLLM serving on an AMD ROCm GPU Droplet
+* Kubernetes/K3s-based deployment of vLLM using standard Kubernetes primitives
+
+This is still a learning lab, not a production inference platform. The Kubernetes phase does not yet implement a custom operator, but it creates the foundation for exploring inference-aware control loops.
 
 ## Why AMD ROCm?
 
