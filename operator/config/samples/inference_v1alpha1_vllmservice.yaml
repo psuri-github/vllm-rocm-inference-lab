@@ -1,0 +1,11 @@
+apiVersion: inference.psuri-github.github.io/v1alpha1
+kind: VLLMService
+metadata:
+  labels:
+    app.kubernetes.io/name: vllm-operator
+    app.kubernetes.io/instance: qwen-inference
+    app.kubernetes.io/managed-by: kustomize
+  name: qwen-inference
+  namespace: vllm
+spec:
+  model: Qwen/Qwen2.5-0.5B-Instruct

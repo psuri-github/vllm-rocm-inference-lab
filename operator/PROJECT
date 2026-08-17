@@ -8,4 +8,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: vllm-operator
 repo: github.com/psuri-github/vllm-rocm-inference-lab/operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: psuri-github.github.io
+  group: inference
+  kind: VLLMService
+  path: github.com/psuri-github/vllm-rocm-inference-lab/operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
