@@ -86,4 +86,26 @@ var _ = Describe("VLLMService Controller", func() {
 			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})
+
+	Context("When reconciling a resource that does not exist", func() {
+		It("should return without an error", func() {
+			By("Reconciling a missing VLLMService")
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(
+				context.Background(),
+				reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      "missing-resource",
+						Namespace: "default",
+					},
+				},
+			)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })
