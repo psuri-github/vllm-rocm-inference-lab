@@ -89,10 +89,13 @@ func labelsForVLLMService(vllmService *inferencev1alpha1.VLLMService) map[string
 	}
 }
 
-func newModelCachePVC(vllmService *inferencev1alpha1.VLLMService) *corev1.PersistentVolumeClaim {
+func labelsForModelCachePVC(vllmService *inferencev1alpha1.VLLMService) map[string]string {
 	labels := labelsForVLLMService(vllmService)
 	labels["app.kubernetes.io/component"] = "model-cache"
+	return labels
+}
 
+func newModelCachePVC(vllmService *inferencev1alpha1.VLLMService) *corev1.PersistentVolumeClaim {
 	var storageClassName *string
 	if vllmService.Spec.StorageClassName != nil {
 		value := *vllmService.Spec.StorageClassName
@@ -103,7 +106,7 @@ func newModelCachePVC(vllmService *inferencev1alpha1.VLLMService) *corev1.Persis
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      modelCachePVCName(vllmService),
 			Namespace: vllmService.Namespace,
-			Labels:    labels,
+			Labels:    labelsForModelCachePVC(vllmService),
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{
@@ -149,7 +152,44 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 			"name", pvc.Name,
 			"namespace", pvc.Namespace,
 		)
+		return nil
 	}
+	if !metav1.IsControlledBy(pvc, vllmService) {
+		return fmt.Errorf(
+			"existing PVC %s is not controlled by VLLMService %s/%s",
+			key,
+			vllmService.Namespace,
+			vllmService.Name,
+		)
+	}
+
+	original := pvc.DeepCopy()
+	labelsChanged := false
+
+	if pvc.Labels == nil {
+		pvc.Labels = map[string]string{}
+	}
+
+	for labelKey, labelValue := range labelsForModelCachePVC(vllmService) {
+		if pvc.Labels[labelKey] != labelValue {
+			pvc.Labels[labelKey] = labelValue
+			labelsChanged = true
+		}
+	}
+
+	if !labelsChanged {
+		return nil
+	}
+
+	if err := r.Patch(ctx, pvc, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("failed to patch PersistentVolumeClaim %s: %w", key, err)
+	}
+
+	logf.FromContext(ctx).Info(
+		"Updated PersistentVolumeClaim labels",
+		"name", pvc.Name,
+		"namespace", pvc.Namespace,
+	)
 
 	return nil
 }

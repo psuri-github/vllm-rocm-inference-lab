@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	inferencev1alpha1 "github.com/psuri-github/vllm-rocm-inference-lab/operator/api/v1alpha1"
@@ -69,9 +70,26 @@ var _ = Describe("VLLMService Controller", func() {
 				Namespace: resourceNamespace,
 			}
 			pvc := &corev1.PersistentVolumeClaim{}
+
 			if err := k8sClient.Get(ctx, pvcKey, pvc); err == nil {
 				By("Cleaning up the model-cache PersistentVolumeClaim")
-				Expect(k8sClient.Delete(ctx, pvc)).To(Succeed())
+
+				if len(pvc.Finalizers) > 0 {
+					pvc.Finalizers = nil
+					Expect(client.IgnoreNotFound(
+						k8sClient.Update(ctx, pvc),
+					)).To(Succeed())
+				}
+
+				Expect(client.IgnoreNotFound(
+					k8sClient.Delete(ctx, pvc),
+				)).To(Succeed())
+
+				Eventually(func() bool {
+					current := &corev1.PersistentVolumeClaim{}
+					err := k8sClient.Get(ctx, pvcKey, current)
+					return errors.IsNotFound(err)
+				}).Should(BeTrue())
 			} else {
 				Expect(errors.IsNotFound(err)).To(BeTrue())
 			}
@@ -121,6 +139,47 @@ var _ = Describe("VLLMService Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
+			By("Simulating label drift")
+			pvc.Labels["app.kubernetes.io/managed-by"] = "manual-change"
+			pvc.Labels["example.com/custom"] = "preserve-me"
+			Expect(k8sClient.Update(ctx, pvc)).To(Succeed())
+
+			By("Reconciling the label drift")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedPVC := &corev1.PersistentVolumeClaim{}
+			Expect(k8sClient.Get(ctx, pvcKey, updatedPVC)).To(Succeed())
+
+			Expect(updatedPVC.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+			Expect(updatedPVC.Labels).To(HaveKeyWithValue(
+				"example.com/custom",
+				"preserve-me",
+			))
+		})
+		It("should reject a same-named PVC that it does not control", func() {
+			By("Creating a same-named PVC without a controller owner reference")
+			pvc := newModelCachePVC(vllmservice)
+			Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				"is not controlled by VLLMService",
+			))
 		})
 	})
 
