@@ -59,7 +59,7 @@ type VLLMServiceSpec struct {
 	// modelCacheSize is the requested capacity of the model-cache PVC.
 	// +kubebuilder:default="20Gi"
 	// +optional
-	ModelCacheSize resource.Quantity `json:"modelCacheSize,omitempty"`
+	ModelCacheSize *resource.Quantity `json:"modelCacheSize,omitempty"`
 
 	// storageClassName selects the StorageClass for the model-cache PVC.
 	// When omitted, Kubernetes uses the cluster's default StorageClass.

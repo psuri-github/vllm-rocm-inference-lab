@@ -21,11 +21,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	inferencev1alpha1 "github.com/psuri-github/vllm-rocm-inference-lab/operator/api/v1alpha1"
 )
@@ -60,10 +60,21 @@ var _ = Describe("VLLMService Controller", func() {
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, vllmservice)).To(Succeed())
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
+			pvcKey := types.NamespacedName{
+				Name:      resourceName + "-model-cache",
+				Namespace: resourceNamespace,
+			}
+			pvc := &corev1.PersistentVolumeClaim{}
+			if err := k8sClient.Get(ctx, pvcKey, pvc); err == nil {
+				By("Cleaning up the model-cache PersistentVolumeClaim")
+				Expect(k8sClient.Delete(ctx, pvc)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
 			resource := &inferencev1alpha1.VLLMService{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
@@ -71,7 +82,7 @@ var _ = Describe("VLLMService Controller", func() {
 			By("Cleanup the specific resource instance VLLMService")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-		It("should successfully reconcile the resource", func() {
+		It("should create and own a model-cache PersistentVolumeClaim idempotently", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &VLLMServiceReconciler{
 				Client: k8sClient,
@@ -82,8 +93,34 @@ var _ = Describe("VLLMService Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			pvc := &corev1.PersistentVolumeClaim{}
+			pvcKey := types.NamespacedName{
+				Name:      resourceName + "-model-cache",
+				Namespace: resourceNamespace,
+			}
+
+			Expect(k8sClient.Get(ctx, pvcKey, pvc)).To(Succeed())
+
+			Expect(pvc.Spec.AccessModes).To(Equal(
+				[]corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			))
+
+			storageRequest, found := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+			Expect(found).To(BeTrue())
+			Expect(storageRequest.String()).To(Equal("20Gi"))
+
+			Expect(pvc.Labels).To(HaveKeyWithValue("app.kubernetes.io/name", "vllm"))
+			Expect(pvc.Labels).To(HaveKeyWithValue("app.kubernetes.io/instance", resourceName))
+			Expect(pvc.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "model-cache"))
+			Expect(pvc.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "vllm-operator"))
+
+			Expect(metav1.IsControlledBy(pvc, vllmservice)).To(BeTrue())
+
+			By("Reconciling the same resource again")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
