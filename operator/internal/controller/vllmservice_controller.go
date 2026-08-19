@@ -24,6 +24,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -42,6 +43,7 @@ type VLLMServiceReconciler struct {
 // +kubebuilder:rbac:groups=inference.psuri-github.github.io,resources=vllmservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=inference.psuri-github.github.io,resources=vllmservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -70,8 +72,13 @@ func (r *VLLMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		"namespace", vllmService.Namespace,
 		"generation", vllmService.Generation,
 	)
+
 	if err := r.ensureModelCachePVC(ctx, vllmService); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to ensure model-cache PVC: %w", err)
+	}
+
+	if err := r.ensureVLLMServerService(ctx, vllmService); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to ensure vLLM Service: %w", err)
 	}
 
 	return ctrl.Result{}, nil
@@ -93,6 +100,22 @@ func labelsForModelCachePVC(vllmService *inferencev1alpha1.VLLMService) map[stri
 	labels := labelsForVLLMService(vllmService)
 	labels["app.kubernetes.io/component"] = "model-cache"
 	return labels
+}
+
+func labelsForVLLMServer(vllmService *inferencev1alpha1.VLLMService) map[string]string {
+	labels := labelsForVLLMService(vllmService)
+	labels["app.kubernetes.io/component"] = "server"
+	return labels
+}
+
+func selectorLabelsForVLLMServer(
+	vllmService *inferencev1alpha1.VLLMService,
+) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":      "vllm",
+		"app.kubernetes.io/instance":  vllmService.Name,
+		"app.kubernetes.io/component": "server",
+	}
 }
 
 func newModelCachePVC(vllmService *inferencev1alpha1.VLLMService) *corev1.PersistentVolumeClaim {
@@ -243,11 +266,81 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 	return nil
 }
 
+func vllmServerServiceName(
+	vllmService *inferencev1alpha1.VLLMService,
+) string {
+	return vllmService.Name
+}
+
+func newVLLMServerService(
+	vllmService *inferencev1alpha1.VLLMService,
+) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      vllmServerServiceName(vllmService),
+			Namespace: vllmService.Namespace,
+			Labels:    labelsForVLLMServer(vllmService),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: selectorLabelsForVLLMServer(vllmService),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "http",
+					Protocol:   corev1.ProtocolTCP,
+					Port:       vllmService.Spec.Port,
+					TargetPort: intstr.FromString("http"),
+				},
+			},
+		},
+	}
+}
+
+func (r *VLLMServiceReconciler) ensureVLLMServerService(
+	ctx context.Context,
+	vllmService *inferencev1alpha1.VLLMService,
+) error {
+	key := client.ObjectKey{
+		Name:      vllmServerServiceName(vllmService),
+		Namespace: vllmService.Namespace,
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, key, service); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get Service %s: %w", key, err)
+		}
+
+		service = newVLLMServerService(vllmService)
+
+		if err := controllerutil.SetControllerReference(
+			vllmService,
+			service,
+			r.Scheme,
+		); err != nil {
+			return fmt.Errorf("failed to set VLLMService as Service owner: %w", err)
+		}
+
+		if err := r.Create(ctx, service); err != nil {
+			return fmt.Errorf("failed to create Service %s: %w", key, err)
+		}
+
+		logf.FromContext(ctx).Info(
+			"Created Service",
+			"name", service.Name,
+			"namespace", service.Namespace,
+		)
+	}
+
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *VLLMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&inferencev1alpha1.VLLMService{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.Service{}).
 		Named("vllmservice").
 		Complete(r)
 }

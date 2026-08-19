@@ -99,6 +99,18 @@ var _ = Describe("VLLMService Controller", func() {
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
+			serviceKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			service := &corev1.Service{}
+
+			if err := k8sClient.Get(ctx, serviceKey, service); err == nil {
+				By("Cleaning up the vLLM Service")
+				Expect(k8sClient.Delete(ctx, service)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
 			By("Cleanup the specific resource instance VLLMService")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
@@ -321,6 +333,51 @@ var _ = Describe("VLLMService Controller", func() {
 			Expect(k8sClient.Get(ctx, pvcKey, pvc)).To(Succeed())
 			Expect(pvc.Spec.StorageClassName).NotTo(BeNil())
 			Expect(*pvc.Spec.StorageClassName).To(Equal(initialStorageClassName))
+		})
+		It("should create and own a vLLM Service idempotently", func() {
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Reconciling the VLLMService")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, serviceKey, service)).To(Succeed())
+
+			Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+			Expect(service.Spec.Selector).To(Equal(map[string]string{
+				"app.kubernetes.io/name":      "vllm",
+				"app.kubernetes.io/instance":  resourceName,
+				"app.kubernetes.io/component": "server",
+			}))
+
+			Expect(service.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+
+			Expect(service.Spec.Ports).To(HaveLen(1))
+			servicePort := service.Spec.Ports[0]
+			Expect(servicePort.Name).To(Equal("http"))
+			Expect(servicePort.Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(servicePort.Port).To(Equal(int32(8000)))
+			Expect(servicePort.TargetPort.String()).To(Equal("http"))
+
+			Expect(metav1.IsControlledBy(service, vllmservice)).To(BeTrue())
+
+			By("Reconciling the same VLLMService again")
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 
