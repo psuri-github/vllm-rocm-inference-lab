@@ -126,6 +126,13 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 	ctx context.Context,
 	vllmService *inferencev1alpha1.VLLMService,
 ) error {
+	if vllmService.Spec.ModelCacheSize == nil {
+		return fmt.Errorf(
+			"modelCacheSize is missing from VLLMService %s/%s",
+			vllmService.Namespace,
+			vllmService.Name,
+		)
+	}
 	key := client.ObjectKey{
 		Name:      modelCachePVCName(vllmService),
 		Namespace: vllmService.Namespace,
@@ -164,7 +171,7 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 	}
 
 	original := pvc.DeepCopy()
-	labelsChanged := false
+	pvcChanged := false
 
 	if pvc.Labels == nil {
 		pvc.Labels = map[string]string{}
@@ -173,11 +180,37 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 	for labelKey, labelValue := range labelsForModelCachePVC(vllmService) {
 		if pvc.Labels[labelKey] != labelValue {
 			pvc.Labels[labelKey] = labelValue
-			labelsChanged = true
+			pvcChanged = true
 		}
 	}
 
-	if !labelsChanged {
+	desiredStorage := vllmService.Spec.ModelCacheSize.DeepCopy()
+
+	if pvc.Spec.Resources.Requests == nil {
+		pvc.Spec.Resources.Requests = corev1.ResourceList{}
+	}
+
+	currentStorage, found := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	if !found {
+		pvc.Spec.Resources.Requests[corev1.ResourceStorage] = desiredStorage
+		pvcChanged = true
+	} else {
+		comparison := desiredStorage.Cmp(currentStorage)
+
+		if comparison > 0 {
+			pvc.Spec.Resources.Requests[corev1.ResourceStorage] = desiredStorage
+			pvcChanged = true
+		} else if comparison < 0 {
+			return fmt.Errorf(
+				"cannot decrease storage request for PVC %s from %s to %s",
+				key,
+				currentStorage.String(),
+				desiredStorage.String(),
+			)
+		}
+	}
+
+	if !pvcChanged {
 		return nil
 	}
 
@@ -186,7 +219,7 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 	}
 
 	logf.FromContext(ctx).Info(
-		"Updated PersistentVolumeClaim labels",
+		"Updated PersistentVolumeClaim",
 		"name", pvc.Name,
 		"namespace", pvc.Namespace,
 	)
