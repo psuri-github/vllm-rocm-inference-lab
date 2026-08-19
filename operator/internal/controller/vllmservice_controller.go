@@ -170,6 +170,22 @@ func (r *VLLMServiceReconciler) ensureModelCachePVC(
 		)
 	}
 
+	if vllmService.Spec.StorageClassName != nil {
+		actualStorageClassName := "<none>"
+		if pvc.Spec.StorageClassName != nil {
+			actualStorageClassName = *pvc.Spec.StorageClassName
+		}
+
+		if actualStorageClassName != *vllmService.Spec.StorageClassName {
+			return fmt.Errorf(
+				"cannot change storageClassName for PVC %s from %q to %q",
+				key,
+				actualStorageClassName,
+				*vllmService.Spec.StorageClassName,
+			)
+		}
+	}
+
 	original := pvc.DeepCopy()
 	pvcChanged := false
 

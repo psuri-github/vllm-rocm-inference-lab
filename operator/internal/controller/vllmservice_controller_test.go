@@ -281,6 +281,47 @@ var _ = Describe("VLLMService Controller", func() {
 			actualSize := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 			Expect(actualSize.String()).To(Equal("20Gi"))
 		})
+		It("should reject changing the model-cache PVC storage class", func() {
+			initialStorageClassName := "initial-test"
+			vllmservice.Spec.StorageClassName = &initialStorageClassName
+			Expect(k8sClient.Update(ctx, vllmservice)).To(Succeed())
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Creating the model-cache PVC with the initial StorageClass")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Requesting a different StorageClass")
+			replacementStorageClassName := "replacement-test"
+			vllmservice.Spec.StorageClassName = &replacementStorageClassName
+			Expect(k8sClient.Update(ctx, vllmservice)).To(Succeed())
+
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				`cannot change storageClassName`,
+			))
+			Expect(err.Error()).To(ContainSubstring(
+				`from "initial-test" to "replacement-test"`,
+			))
+
+			By("Confirming that the PVC retained its original StorageClass")
+			pvc := &corev1.PersistentVolumeClaim{}
+			pvcKey := types.NamespacedName{
+				Name:      resourceName + "-model-cache",
+				Namespace: resourceNamespace,
+			}
+			Expect(k8sClient.Get(ctx, pvcKey, pvc)).To(Succeed())
+			Expect(pvc.Spec.StorageClassName).NotTo(BeNil())
+			Expect(*pvc.Spec.StorageClassName).To(Equal(initialStorageClassName))
+		})
 	})
 
 	Context("When reconciling a resource that does not exist", func() {
