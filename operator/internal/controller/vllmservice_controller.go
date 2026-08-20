@@ -457,8 +457,9 @@ func newVLLMHealthProbe(
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: "/health",
-				Port: intstr.FromString("http"),
+				Path:   "/health",
+				Port:   intstr.FromString("http"),
+				Scheme: corev1.URISchemeHTTP,
 			},
 		},
 		TimeoutSeconds:   1,
@@ -524,9 +525,11 @@ func newVLLMServerDeployment(
 									MountPath: "/dev/shm",
 								},
 							},
-							StartupProbe:   newVLLMHealthProbe(10, 90),
-							ReadinessProbe: newVLLMHealthProbe(5, 3),
-							LivenessProbe:  newVLLMHealthProbe(10, 3),
+							StartupProbe:             newVLLMHealthProbe(10, 90),
+							ReadinessProbe:           newVLLMHealthProbe(5, 3),
+							LivenessProbe:            newVLLMHealthProbe(10, 3),
+							TerminationMessagePath:   "/dev/termination-log",
+							TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 						},
 					},
 					Volumes: []corev1.Volume{
@@ -592,6 +595,127 @@ func (r *VLLMServiceReconciler) ensureVLLMServerDeployment(
 			"namespace", deployment.Namespace,
 		)
 	}
+
+	if !metav1.IsControlledBy(deployment, vllmService) {
+		return fmt.Errorf(
+			"existing Deployment %s is not controlled by VLLMService %s/%s",
+			key,
+			vllmService.Namespace,
+			vllmService.Name,
+		)
+	}
+
+	desiredDeployment := newVLLMServerDeployment(vllmService)
+
+	if !apiequality.Semantic.DeepEqual(
+		deployment.Spec.Selector,
+		desiredDeployment.Spec.Selector,
+	) {
+		return fmt.Errorf(
+			"cannot reconcile Deployment %s because its immutable selector does not match VLLMService %s/%s",
+			key,
+			vllmService.Namespace,
+			vllmService.Name,
+		)
+	}
+	original := deployment.DeepCopy()
+	deploymentChanged := false
+
+	if deployment.Labels == nil {
+		deployment.Labels = map[string]string{}
+	}
+
+	for labelKey, labelValue := range desiredDeployment.Labels {
+		if deployment.Labels[labelKey] != labelValue {
+			deployment.Labels[labelKey] = labelValue
+			deploymentChanged = true
+		}
+	}
+
+	if deployment.Spec.Replicas == nil ||
+		*deployment.Spec.Replicas != *desiredDeployment.Spec.Replicas {
+		replicas := *desiredDeployment.Spec.Replicas
+		deployment.Spec.Replicas = &replicas
+		deploymentChanged = true
+	}
+
+	if deployment.Spec.Template.Labels == nil {
+		deployment.Spec.Template.Labels = map[string]string{}
+	}
+
+	for labelKey, labelValue := range desiredDeployment.Spec.Template.Labels {
+		if deployment.Spec.Template.Labels[labelKey] != labelValue {
+			deployment.Spec.Template.Labels[labelKey] = labelValue
+			deploymentChanged = true
+		}
+	}
+
+	desiredContainer := desiredDeployment.Spec.Template.Spec.Containers[0]
+	containerIndex := -1
+
+	for index := range deployment.Spec.Template.Spec.Containers {
+		if deployment.Spec.Template.Spec.Containers[index].Name == desiredContainer.Name {
+			containerIndex = index
+			break
+		}
+	}
+
+	if containerIndex == -1 {
+		deployment.Spec.Template.Spec.Containers = append(
+			deployment.Spec.Template.Spec.Containers,
+			desiredContainer,
+		)
+		deploymentChanged = true
+	} else if !apiequality.Semantic.DeepEqual(
+		deployment.Spec.Template.Spec.Containers[containerIndex],
+		desiredContainer,
+	) {
+		deployment.Spec.Template.Spec.Containers[containerIndex] = desiredContainer
+		deploymentChanged = true
+	}
+
+	for _, desiredVolume := range desiredDeployment.Spec.Template.Spec.Volumes {
+		volumeIndex := -1
+
+		for index := range deployment.Spec.Template.Spec.Volumes {
+			if deployment.Spec.Template.Spec.Volumes[index].Name == desiredVolume.Name {
+				volumeIndex = index
+				break
+			}
+		}
+
+		if volumeIndex == -1 {
+			deployment.Spec.Template.Spec.Volumes = append(
+				deployment.Spec.Template.Spec.Volumes,
+				desiredVolume,
+			)
+			deploymentChanged = true
+		} else if !apiequality.Semantic.DeepEqual(
+			deployment.Spec.Template.Spec.Volumes[volumeIndex],
+			desiredVolume,
+		) {
+			deployment.Spec.Template.Spec.Volumes[volumeIndex] = desiredVolume
+			deploymentChanged = true
+		}
+	}
+
+	if !deploymentChanged {
+		return nil
+	}
+
+	if err := r.Patch(
+		ctx,
+		deployment,
+		client.MergeFrom(original),
+	); err != nil {
+		return fmt.Errorf("failed to patch Deployment %s: %w", key, err)
+	}
+
+	logf.FromContext(ctx).Info(
+		"Updated Deployment",
+		"name", deployment.Name,
+		"namespace", deployment.Namespace,
+	)
 
 	return nil
 }

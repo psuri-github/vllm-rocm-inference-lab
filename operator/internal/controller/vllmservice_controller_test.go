@@ -692,6 +692,352 @@ var _ = Describe("VLLMService Controller", func() {
 			)).To(Succeed())
 			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
 		})
+		It("should reject a same-named Deployment that it does not control", func() {
+			By("Creating a same-named Deployment without a controller owner reference")
+
+			unrelatedLabels := map[string]string{
+				"app": "unrelated",
+			}
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: unrelatedLabels,
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: unrelatedLabels,
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "unrelated",
+									Image: "busybox:1.36",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				"is not controlled by VLLMService",
+			))
+
+			By("Confirming that the conflicting Deployment was not modified")
+			existingDeployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			Expect(k8sClient.Get(
+				ctx,
+				deploymentKey,
+				existingDeployment,
+			)).To(Succeed())
+
+			Expect(existingDeployment.OwnerReferences).To(BeEmpty())
+			Expect(existingDeployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(
+				existingDeployment.Spec.Template.Spec.Containers[0].Image,
+			).To(Equal("busybox:1.36"))
+		})
+		It("should reconcile mutable Deployment drift and preserve custom additions", func() {
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Creating the vLLM Deployment")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+
+			originalSelector := deployment.Spec.Selector.DeepCopy()
+
+			By("Introducing drift and custom additions")
+			deployment.Labels["app.kubernetes.io/managed-by"] = "manual-change"
+			deployment.Labels["team"] = "ai-platform"
+
+			deployment.Spec.Template.Labels["app.kubernetes.io/managed-by"] = "manual-change"
+			deployment.Spec.Template.Labels["team"] = "ai-platform"
+			deployment.Spec.Template.Annotations = map[string]string{
+				"example.com/custom": "preserve-me",
+			}
+
+			vllmContainer := &deployment.Spec.Template.Spec.Containers[0]
+			vllmContainer.Image = "example.com/wrong-image:latest"
+			vllmContainer.Args = []string{"wrong-model"}
+			vllmContainer.Ports[0].ContainerPort = 9000
+			vllmContainer.Resources = corev1.ResourceRequirements{}
+			vllmContainer.SecurityContext = nil
+			vllmContainer.StartupProbe = nil
+			vllmContainer.ReadinessProbe.PeriodSeconds = 99
+			vllmContainer.VolumeMounts = nil
+
+			deployment.Spec.Template.Spec.Containers = append(
+				deployment.Spec.Template.Spec.Containers,
+				corev1.Container{
+					Name:  "custom-sidecar",
+					Image: "busybox:1.36",
+				},
+			)
+
+			deployment.Spec.Template.Spec.Volumes[0].
+				PersistentVolumeClaim.ClaimName = "wrong-cache"
+
+			wrongSharedMemorySize := apiresource.MustParse("1Gi")
+			deployment.Spec.Template.Spec.Volumes[1].EmptyDir.Medium = ""
+			deployment.Spec.Template.Spec.Volumes[1].
+				EmptyDir.SizeLimit = &wrongSharedMemorySize
+
+			deployment.Spec.Template.Spec.Volumes = append(
+				deployment.Spec.Template.Spec.Volumes,
+				corev1.Volume{
+					Name: "sidecar-data",
+					VolumeSource: corev1.VolumeSource{
+						EmptyDir: &corev1.EmptyDirVolumeSource{},
+					},
+				},
+			)
+
+			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
+
+			By("Changing mutable VLLMService fields")
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				vllmservice,
+			)).To(Succeed())
+
+			vllmservice.Spec.Model = "updated-model"
+			vllmservice.Spec.Image = "example.com/vllm:updated"
+			vllmservice.Spec.Replicas = 2
+			vllmservice.Spec.Port = 8080
+			vllmservice.Spec.GPUCount = 2
+
+			Expect(k8sClient.Update(ctx, vllmservice)).To(Succeed())
+
+			By("Reconciling the changed desired state and Deployment drift")
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(
+				ctx,
+				deploymentKey,
+				updatedDeployment,
+			)).To(Succeed())
+
+			Expect(updatedDeployment.Spec.Replicas).NotTo(BeNil())
+			Expect(*updatedDeployment.Spec.Replicas).To(Equal(int32(2)))
+			Expect(updatedDeployment.Spec.Selector).To(Equal(originalSelector))
+
+			Expect(updatedDeployment.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+			Expect(updatedDeployment.Labels).To(HaveKeyWithValue(
+				"team",
+				"ai-platform",
+			))
+			Expect(updatedDeployment.Spec.Template.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+			Expect(updatedDeployment.Spec.Template.Labels).To(HaveKeyWithValue(
+				"team",
+				"ai-platform",
+			))
+			Expect(updatedDeployment.Spec.Template.Annotations).To(
+				HaveKeyWithValue("example.com/custom", "preserve-me"),
+			)
+
+			var updatedVLLMContainer *corev1.Container
+			var preservedSidecar *corev1.Container
+
+			for index := range updatedDeployment.Spec.Template.Spec.Containers {
+				container := &updatedDeployment.Spec.Template.Spec.Containers[index]
+
+				switch container.Name {
+				case "vllm":
+					updatedVLLMContainer = container
+				case "custom-sidecar":
+					preservedSidecar = container
+				}
+			}
+
+			Expect(updatedVLLMContainer).NotTo(BeNil())
+			Expect(updatedVLLMContainer.Image).To(Equal(
+				"example.com/vllm:updated",
+			))
+			Expect(updatedVLLMContainer.Args[0]).To(Equal("updated-model"))
+			Expect(updatedVLLMContainer.Args[4]).To(Equal("8080"))
+			Expect(updatedVLLMContainer.Ports).To(HaveLen(1))
+			Expect(updatedVLLMContainer.Ports[0].ContainerPort).To(
+				Equal(int32(8080)),
+			)
+
+			amdGPU := corev1.ResourceName("amd.com/gpu")
+			gpuRequest := updatedVLLMContainer.Resources.Requests[amdGPU]
+			gpuLimit := updatedVLLMContainer.Resources.Limits[amdGPU]
+			Expect(gpuRequest.String()).To(Equal("2"))
+			Expect(gpuLimit.String()).To(Equal("2"))
+
+			Expect(updatedVLLMContainer.SecurityContext).NotTo(BeNil())
+			Expect(updatedVLLMContainer.StartupProbe).NotTo(BeNil())
+			Expect(updatedVLLMContainer.ReadinessProbe.PeriodSeconds).To(
+				Equal(int32(5)),
+			)
+			Expect(updatedVLLMContainer.VolumeMounts).To(HaveLen(2))
+
+			Expect(preservedSidecar).NotTo(BeNil())
+			Expect(preservedSidecar.Image).To(Equal("busybox:1.36"))
+
+			var modelCacheVolume *corev1.Volume
+			var sharedMemoryVolume *corev1.Volume
+			var preservedExtraVolume *corev1.Volume
+
+			for index := range updatedDeployment.Spec.Template.Spec.Volumes {
+				volume := &updatedDeployment.Spec.Template.Spec.Volumes[index]
+
+				switch volume.Name {
+				case "model-cache":
+					modelCacheVolume = volume
+				case "shared-memory":
+					sharedMemoryVolume = volume
+				case "sidecar-data":
+					preservedExtraVolume = volume
+				}
+			}
+
+			Expect(modelCacheVolume).NotTo(BeNil())
+			Expect(modelCacheVolume.PersistentVolumeClaim).NotTo(BeNil())
+			Expect(modelCacheVolume.PersistentVolumeClaim.ClaimName).To(Equal(
+				resourceName + "-model-cache",
+			))
+
+			Expect(sharedMemoryVolume).NotTo(BeNil())
+			Expect(sharedMemoryVolume.EmptyDir).NotTo(BeNil())
+			Expect(sharedMemoryVolume.EmptyDir.Medium).To(Equal(
+				corev1.StorageMediumMemory,
+			))
+			Expect(sharedMemoryVolume.EmptyDir.SizeLimit).NotTo(BeNil())
+			Expect(sharedMemoryVolume.EmptyDir.SizeLimit.String()).To(Equal("8Gi"))
+
+			Expect(preservedExtraVolume).NotTo(BeNil())
+
+			By("Reconciling again without any changes")
+			resourceVersion := updatedDeployment.ResourceVersion
+
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciledAgain := &appsv1.Deployment{}
+			Expect(k8sClient.Get(
+				ctx,
+				deploymentKey,
+				reconciledAgain,
+			)).To(Succeed())
+			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
+		})
+		It("should reject an owned Deployment with an incompatible selector", func() {
+			By("Creating an owned Deployment with a legacy selector")
+
+			legacyLabels := map[string]string{
+				"app": "legacy-vllm",
+			}
+
+			deployment := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+					OwnerReferences: []metav1.OwnerReference{
+						*metav1.NewControllerRef(
+							vllmservice,
+							inferencev1alpha1.GroupVersion.WithKind(
+								"VLLMService",
+							),
+						),
+					},
+				},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{
+						MatchLabels: legacyLabels,
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: legacyLabels,
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "legacy-vllm",
+									Image: "busybox:1.36",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, deployment)).To(Succeed())
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				"immutable selector does not match",
+			))
+
+			By("Confirming that the incompatible Deployment was not modified")
+			existingDeployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			Expect(k8sClient.Get(
+				ctx,
+				deploymentKey,
+				existingDeployment,
+			)).To(Succeed())
+
+			Expect(existingDeployment.Spec.Selector.MatchLabels).To(Equal(
+				legacyLabels,
+			))
+			Expect(
+				existingDeployment.Spec.Template.Spec.Containers[0].Image,
+			).To(Equal("busybox:1.36"))
+		})
 	})
 
 	Context("When reconciling a resource that does not exist", func() {
