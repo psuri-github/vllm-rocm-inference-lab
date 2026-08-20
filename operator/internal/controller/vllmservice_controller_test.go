@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -258,6 +259,12 @@ var _ = Describe("VLLMService Controller", func() {
 			pvc.Status.Phase = corev1.ClaimBound
 			Expect(k8sClient.Status().Update(ctx, pvc)).To(Succeed())
 
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				vllmservice,
+			)).To(Succeed())
+
 			By("Increasing the requested model-cache size")
 			expandedSize := apiresource.MustParse("30Gi")
 			vllmservice.Spec.ModelCacheSize = &expandedSize
@@ -284,6 +291,12 @@ var _ = Describe("VLLMService Controller", func() {
 			By("Creating the model-cache PVC")
 			_, err := controllerReconciler.Reconcile(ctx, request)
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				vllmservice,
+			)).To(Succeed())
 
 			By("Requesting a smaller model-cache size")
 			smallerSize := apiresource.MustParse("10Gi")
@@ -322,6 +335,12 @@ var _ = Describe("VLLMService Controller", func() {
 			By("Creating the model-cache PVC with the initial StorageClass")
 			_, err := controllerReconciler.Reconcile(ctx, request)
 			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				vllmservice,
+			)).To(Succeed())
 
 			By("Requesting a different StorageClass")
 			replacementStorageClassName := "replacement-test"
@@ -1037,6 +1056,149 @@ var _ = Describe("VLLMService Controller", func() {
 			Expect(
 				existingDeployment.Spec.Template.Spec.Containers[0].Image,
 			).To(Equal("busybox:1.36"))
+		})
+		It("should report Deployment readiness in VLLMService status", func() {
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Reconciling before the Deployment controller observes it")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			notReadyService := &inferencev1alpha1.VLLMService{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				notReadyService,
+			)).To(Succeed())
+
+			Expect(notReadyService.Status.ObservedGeneration).To(Equal(
+				notReadyService.Generation,
+			))
+			Expect(notReadyService.Status.ReadyReplicas).To(Equal(int32(0)))
+			Expect(notReadyService.Status.ServiceName).To(Equal(resourceName))
+
+			readyCondition := apimeta.FindStatusCondition(
+				notReadyService.Status.Conditions,
+				inferencev1alpha1.VLLMServiceConditionReady,
+			)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(
+				inferencev1alpha1.VLLMServiceReasonReconciling,
+			))
+			Expect(readyCondition.ObservedGeneration).To(Equal(
+				notReadyService.Generation,
+			))
+			Expect(readyCondition.Message).To(ContainSubstring(
+				"Waiting for Deployment controller to observe generation",
+			))
+
+			By("Simulating the Deployment controller observing the generation")
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+
+			deployment.Status.ObservedGeneration = deployment.Generation
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			deployment.Status.ReadyReplicas = 0
+			deployment.Status.AvailableReplicas = 0
+
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Reconciling while the Deployment Pod is not ready")
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			observedButNotReadyService := &inferencev1alpha1.VLLMService{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				observedButNotReadyService,
+			)).To(Succeed())
+
+			Expect(observedButNotReadyService.Status.ObservedGeneration).To(Equal(
+				observedButNotReadyService.Generation,
+			))
+			Expect(observedButNotReadyService.Status.ReadyReplicas).To(Equal(int32(0)))
+			readyCondition = apimeta.FindStatusCondition(
+				observedButNotReadyService.Status.Conditions,
+				inferencev1alpha1.VLLMServiceConditionReady,
+			)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCondition.Reason).To(Equal(
+				inferencev1alpha1.VLLMServiceReasonDeploymentNotReady,
+			))
+			Expect(readyCondition.ObservedGeneration).To(Equal(observedButNotReadyService.Generation))
+			Expect(readyCondition.Message).To(Equal(
+				"Deployment has 0 of 1 ready replicas",
+			))
+
+			By("Simulating the Deployment controller reporting a ready replica")
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+
+			deployment.Status.ObservedGeneration = deployment.Generation
+			deployment.Status.Replicas = 1
+			deployment.Status.UpdatedReplicas = 1
+			deployment.Status.ReadyReplicas = 1
+			deployment.Status.AvailableReplicas = 1
+
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+
+			By("Reconciling after the Deployment becomes ready")
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			availableService := &inferencev1alpha1.VLLMService{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				availableService,
+			)).To(Succeed())
+
+			Expect(availableService.Status.ObservedGeneration).To(Equal(availableService.Generation))
+			Expect(availableService.Status.ReadyReplicas).To(Equal(int32(1)))
+			Expect(availableService.Status.ServiceName).To(Equal(resourceName))
+
+			readyCondition = apimeta.FindStatusCondition(
+				availableService.Status.Conditions,
+				inferencev1alpha1.VLLMServiceConditionReady,
+			)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyCondition.Reason).To(Equal(
+				inferencev1alpha1.VLLMServiceReasonDeploymentAvailable,
+			))
+			Expect(readyCondition.ObservedGeneration).To(Equal(
+				availableService.Generation,
+			))
+			Expect(readyCondition.Message).To(Equal(
+				"Deployment has 1 of 1 ready replicas",
+			))
+
+			By("Reconciling again without a readiness change")
+			resourceVersion := availableService.ResourceVersion
+
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciledAgain := &inferencev1alpha1.VLLMService{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				reconciledAgain,
+			)).To(Succeed())
+			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
 		})
 	})
 

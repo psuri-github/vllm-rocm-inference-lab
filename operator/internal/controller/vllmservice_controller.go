@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,6 +88,10 @@ func (r *VLLMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	if err := r.ensureVLLMServerDeployment(ctx, vllmService); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to ensure vLLM Deployment: %w", err)
+	}
+
+	if err := r.updateVLLMServiceStatus(ctx, vllmService); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to update VLLMService status: %w", err)
 	}
 
 	return ctrl.Result{}, nil
@@ -715,6 +720,96 @@ func (r *VLLMServiceReconciler) ensureVLLMServerDeployment(
 		"Updated Deployment",
 		"name", deployment.Name,
 		"namespace", deployment.Namespace,
+	)
+
+	return nil
+}
+
+func (r *VLLMServiceReconciler) updateVLLMServiceStatus(
+	ctx context.Context,
+	vllmService *inferencev1alpha1.VLLMService,
+) error {
+	deploymentKey := client.ObjectKey{
+		Name:      vllmServerDeploymentName(vllmService),
+		Namespace: vllmService.Namespace,
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, deploymentKey, deployment); err != nil {
+		return fmt.Errorf(
+			"failed to get Deployment %s for status: %w",
+			deploymentKey,
+			err,
+		)
+	}
+
+	original := vllmService.DeepCopy()
+
+	vllmService.Status.ObservedGeneration = vllmService.Generation
+	vllmService.Status.ReadyReplicas = deployment.Status.ReadyReplicas
+	vllmService.Status.ServiceName = vllmServerServiceName(vllmService)
+
+	condition := metav1.Condition{
+		Type:               inferencev1alpha1.VLLMServiceConditionReady,
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: vllmService.Generation,
+		Reason:             inferencev1alpha1.VLLMServiceReasonDeploymentNotReady,
+	}
+
+	desiredReplicas := vllmService.Spec.Replicas
+	deploymentObservedGeneration :=
+		deployment.Status.ObservedGeneration >= deployment.Generation
+
+	switch {
+	case !deploymentObservedGeneration:
+		condition.Reason =
+			inferencev1alpha1.VLLMServiceReasonReconciling
+		condition.Message = fmt.Sprintf(
+			"Waiting for Deployment controller to observe generation %d",
+			deployment.Generation,
+		)
+	case deployment.Status.ReadyReplicas < desiredReplicas:
+		condition.Message = fmt.Sprintf(
+			"Deployment has %d of %d ready replicas",
+			deployment.Status.ReadyReplicas,
+			desiredReplicas,
+		)
+	default:
+		condition.Status = metav1.ConditionTrue
+		condition.Reason =
+			inferencev1alpha1.VLLMServiceReasonDeploymentAvailable
+		condition.Message = fmt.Sprintf(
+			"Deployment has %d of %d ready replicas",
+			deployment.Status.ReadyReplicas,
+			desiredReplicas,
+		)
+	}
+
+	apimeta.SetStatusCondition(
+		&vllmService.Status.Conditions,
+		condition,
+	)
+
+	if apiequality.Semantic.DeepEqual(
+		original.Status,
+		vllmService.Status,
+	) {
+		return nil
+	}
+
+	if err := r.Status().Patch(
+		ctx,
+		vllmService,
+		client.MergeFrom(original),
+	); err != nil {
+		return fmt.Errorf("failed to patch VLLMService status: %w", err)
+	}
+
+	logf.FromContext(ctx).Info(
+		"Updated VLLMService status",
+		"name", vllmService.Name,
+		"namespace", vllmService.Namespace,
+		"readyReplicas", vllmService.Status.ReadyReplicas,
 	)
 
 	return nil

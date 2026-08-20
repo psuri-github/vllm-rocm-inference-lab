@@ -67,6 +67,28 @@ type VLLMServiceSpec struct {
 	StorageClassName *string `json:"storageClassName,omitempty"`
 }
 
+const (
+	// VLLMServiceConditionReady indicates whether the vLLM workload is ready
+	// to serve inference requests.
+	VLLMServiceConditionReady = "Ready"
+
+	// VLLMServiceReasonReconciling indicates that the desired resources are
+	// still being reconciled.
+	VLLMServiceReasonReconciling = "Reconciling"
+
+	// VLLMServiceReasonDeploymentAvailable indicates that the desired number
+	// of Deployment replicas are ready.
+	VLLMServiceReasonDeploymentAvailable = "DeploymentAvailable"
+
+	// VLLMServiceReasonDeploymentNotReady indicates that the Deployment has
+	// not reached its desired number of ready replicas.
+	VLLMServiceReasonDeploymentNotReady = "DeploymentNotReady"
+
+	// VLLMServiceReasonReconciliationFailed indicates that reconciliation
+	// failed.
+	VLLMServiceReasonReconciliationFailed = "ReconciliationFailed"
+)
+
 // VLLMServiceStatus defines the observed state of VLLMService.
 type VLLMServiceStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
@@ -75,15 +97,22 @@ type VLLMServiceStatus struct {
 	// For Kubernetes API conventions, see:
 	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
 
-	// conditions represent the current state of the VLLMService resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// observedGeneration is the most recent VLLMService generation observed by
+	// the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// readyReplicas is the number of vLLM Deployment replicas currently ready.
+	// +optional
+	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
+
+	// serviceName is the name of the Kubernetes Service exposing vLLM.
+	// +optional
+	ServiceName string `json:"serviceName,omitempty"`
+
+	// conditions represent the current state of the VLLMService.
+	// The Ready condition is True when the Deployment has reached its desired
+	// number of ready replicas.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
