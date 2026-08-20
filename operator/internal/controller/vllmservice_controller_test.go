@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -67,6 +68,18 @@ var _ = Describe("VLLMService Controller", func() {
 		})
 
 		AfterEach(func() {
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			deployment := &appsv1.Deployment{}
+
+			if err := k8sClient.Get(ctx, deploymentKey, deployment); err == nil {
+				By("Cleaning up the vLLM Deployment")
+				Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
 			pvcKey := types.NamespacedName{
 				Name:      resourceName + "-model-cache",
 				Namespace: resourceNamespace,
@@ -519,6 +532,164 @@ var _ = Describe("VLLMService Controller", func() {
 
 			reconciledAgain := &corev1.Service{}
 			Expect(k8sClient.Get(ctx, serviceKey, reconciledAgain)).To(Succeed())
+			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
+		})
+		It("should create and own a vLLM Deployment idempotently", func() {
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Reconciling the VLLMService")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			deploymentKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+
+			Expect(metav1.IsControlledBy(deployment, vllmservice)).To(BeTrue())
+
+			Expect(deployment.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+			Expect(deployment.Spec.Replicas).NotTo(BeNil())
+			Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
+
+			expectedSelector := map[string]string{
+				"app.kubernetes.io/name":      "vllm",
+				"app.kubernetes.io/instance":  resourceName,
+				"app.kubernetes.io/component": "server",
+			}
+			Expect(deployment.Spec.Selector.MatchLabels).To(Equal(expectedSelector))
+			Expect(deployment.Spec.Template.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/name",
+				"vllm",
+			))
+			Expect(deployment.Spec.Template.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/instance",
+				resourceName,
+			))
+			Expect(deployment.Spec.Template.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/component",
+				"server",
+			))
+
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			container := deployment.Spec.Template.Spec.Containers[0]
+
+			Expect(container.Name).To(Equal("vllm"))
+			Expect(container.Image).To(Equal(
+				"vllm/vllm-openai-rocm:latest",
+			))
+			Expect(container.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
+			Expect(container.Args).To(Equal([]string{
+				"test-model",
+				"--host",
+				"0.0.0.0",
+				"--port",
+				"8000",
+				"--dtype",
+				"bfloat16",
+				"--max-model-len",
+				"4096",
+				"--gpu-memory-utilization",
+				"0.5",
+				"--generation-config",
+				"vllm",
+			}))
+
+			Expect(container.Ports).To(HaveLen(1))
+			Expect(container.Ports[0].Name).To(Equal("http"))
+			Expect(container.Ports[0].ContainerPort).To(Equal(int32(8000)))
+			Expect(container.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
+
+			amdGPU := corev1.ResourceName("amd.com/gpu")
+
+			cpuRequest := container.Resources.Requests[corev1.ResourceCPU]
+			memoryRequest := container.Resources.Requests[corev1.ResourceMemory]
+			gpuRequest := container.Resources.Requests[amdGPU]
+
+			Expect(cpuRequest.String()).To(Equal("4"))
+			Expect(memoryRequest.String()).To(Equal("16Gi"))
+			Expect(gpuRequest.String()).To(Equal("1"))
+
+			cpuLimit := container.Resources.Limits[corev1.ResourceCPU]
+			memoryLimit := container.Resources.Limits[corev1.ResourceMemory]
+			gpuLimit := container.Resources.Limits[amdGPU]
+
+			Expect(cpuLimit.String()).To(Equal("16"))
+			Expect(memoryLimit.String()).To(Equal("64Gi"))
+			Expect(gpuLimit.String()).To(Equal("1"))
+
+			Expect(container.VolumeMounts).To(HaveLen(2))
+			Expect(container.VolumeMounts[0].Name).To(Equal("model-cache"))
+			Expect(container.VolumeMounts[0].MountPath).To(Equal(
+				"/root/.cache/huggingface",
+			))
+			Expect(container.VolumeMounts[1].Name).To(Equal("shared-memory"))
+			Expect(container.VolumeMounts[1].MountPath).To(Equal("/dev/shm"))
+
+			volumes := deployment.Spec.Template.Spec.Volumes
+			Expect(volumes).To(HaveLen(2))
+
+			Expect(volumes[0].Name).To(Equal("model-cache"))
+			Expect(volumes[0].PersistentVolumeClaim).NotTo(BeNil())
+			Expect(volumes[0].PersistentVolumeClaim.ClaimName).To(Equal(
+				resourceName + "-model-cache",
+			))
+
+			Expect(volumes[1].Name).To(Equal("shared-memory"))
+			Expect(volumes[1].EmptyDir).NotTo(BeNil())
+			Expect(volumes[1].EmptyDir.Medium).To(Equal(
+				corev1.StorageMediumMemory,
+			))
+			Expect(volumes[1].EmptyDir.SizeLimit).NotTo(BeNil())
+			Expect(volumes[1].EmptyDir.SizeLimit.String()).To(Equal("8Gi"))
+
+			Expect(container.StartupProbe).NotTo(BeNil())
+			Expect(container.StartupProbe.HTTPGet.Path).To(Equal("/health"))
+			Expect(container.StartupProbe.HTTPGet.Port.String()).To(Equal("http"))
+			Expect(container.StartupProbe.PeriodSeconds).To(Equal(int32(10)))
+			Expect(container.StartupProbe.FailureThreshold).To(Equal(int32(90)))
+
+			Expect(container.ReadinessProbe).NotTo(BeNil())
+			Expect(container.ReadinessProbe.PeriodSeconds).To(Equal(int32(5)))
+			Expect(container.ReadinessProbe.FailureThreshold).To(Equal(int32(3)))
+
+			Expect(container.LivenessProbe).NotTo(BeNil())
+			Expect(container.LivenessProbe.PeriodSeconds).To(Equal(int32(10)))
+			Expect(container.LivenessProbe.FailureThreshold).To(Equal(int32(3)))
+
+			Expect(container.SecurityContext).NotTo(BeNil())
+			Expect(container.SecurityContext.SeccompProfile).NotTo(BeNil())
+			Expect(container.SecurityContext.SeccompProfile.Type).To(Equal(
+				corev1.SeccompProfileTypeUnconfined,
+			))
+			Expect(container.SecurityContext.Capabilities).NotTo(BeNil())
+			Expect(container.SecurityContext.Capabilities.Add).To(ContainElement(
+				corev1.Capability("SYS_PTRACE"),
+			))
+
+			By("Reconciling again without changing the desired state")
+			resourceVersion := deployment.ResourceVersion
+
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciledAgain := &appsv1.Deployment{}
+			Expect(k8sClient.Get(
+				ctx,
+				deploymentKey,
+				reconciledAgain,
+			)).To(Succeed())
 			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
 		})
 	})

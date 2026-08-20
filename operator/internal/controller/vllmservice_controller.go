@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -45,6 +47,7 @@ type VLLMServiceReconciler struct {
 // +kubebuilder:rbac:groups=inference.psuri-github.github.io,resources=vllmservices/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -80,6 +83,10 @@ func (r *VLLMServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	if err := r.ensureVLLMServerService(ctx, vllmService); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to ensure vLLM Service: %w", err)
+	}
+
+	if err := r.ensureVLLMServerDeployment(ctx, vllmService); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to ensure vLLM Deployment: %w", err)
 	}
 
 	return ctrl.Result{}, nil
@@ -395,12 +402,207 @@ func (r *VLLMServiceReconciler) ensureVLLMServerService(
 	return nil
 }
 
+func vllmServerDeploymentName(
+	vllmService *inferencev1alpha1.VLLMService,
+) string {
+	return vllmService.Name
+}
+
+func vllmServerArgs(
+	vllmService *inferencev1alpha1.VLLMService,
+) []string {
+	return []string{
+		vllmService.Spec.Model,
+		"--host",
+		"0.0.0.0",
+		"--port",
+		fmt.Sprintf("%d", vllmService.Spec.Port),
+		"--dtype",
+		"bfloat16",
+		"--max-model-len",
+		"4096",
+		"--gpu-memory-utilization",
+		"0.5",
+		"--generation-config",
+		"vllm",
+	}
+}
+
+func vllmServerResources(
+	vllmService *inferencev1alpha1.VLLMService,
+) corev1.ResourceRequirements {
+	amdGPU := corev1.ResourceName("amd.com/gpu")
+	gpuQuantity := apiresource.MustParse(
+		fmt.Sprintf("%d", vllmService.Spec.GPUCount),
+	)
+
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    apiresource.MustParse("4"),
+			corev1.ResourceMemory: apiresource.MustParse("16Gi"),
+			amdGPU:                gpuQuantity.DeepCopy(),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    apiresource.MustParse("16"),
+			corev1.ResourceMemory: apiresource.MustParse("64Gi"),
+			amdGPU:                gpuQuantity.DeepCopy(),
+		},
+	}
+}
+
+func newVLLMHealthProbe(
+	periodSeconds int32,
+	failureThreshold int32,
+) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: "/health",
+				Port: intstr.FromString("http"),
+			},
+		},
+		TimeoutSeconds:   1,
+		PeriodSeconds:    periodSeconds,
+		SuccessThreshold: 1,
+		FailureThreshold: failureThreshold,
+	}
+}
+
+func newVLLMServerDeployment(
+	vllmService *inferencev1alpha1.VLLMService,
+) *appsv1.Deployment {
+	replicas := vllmService.Spec.Replicas
+	sharedMemorySize := apiresource.MustParse("8Gi")
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      vllmServerDeploymentName(vllmService),
+			Namespace: vllmService.Namespace,
+			Labels:    labelsForVLLMServer(vllmService),
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: selectorLabelsForVLLMServer(vllmService),
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labelsForVLLMServer(vllmService),
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:            "vllm",
+							Image:           vllmService.Spec.Image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Args:            vllmServerArgs(vllmService),
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          "http",
+									ContainerPort: vllmService.Spec.Port,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								SeccompProfile: &corev1.SeccompProfile{
+									Type: corev1.SeccompProfileTypeUnconfined,
+								},
+								Capabilities: &corev1.Capabilities{
+									Add: []corev1.Capability{
+										"SYS_PTRACE",
+									},
+								},
+							},
+							Resources: vllmServerResources(vllmService),
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "model-cache",
+									MountPath: "/root/.cache/huggingface",
+								},
+								{
+									Name:      "shared-memory",
+									MountPath: "/dev/shm",
+								},
+							},
+							StartupProbe:   newVLLMHealthProbe(10, 90),
+							ReadinessProbe: newVLLMHealthProbe(5, 3),
+							LivenessProbe:  newVLLMHealthProbe(10, 3),
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "model-cache",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: modelCachePVCName(vllmService),
+								},
+							},
+						},
+						{
+							Name: "shared-memory",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{
+									Medium:    corev1.StorageMediumMemory,
+									SizeLimit: &sharedMemorySize,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *VLLMServiceReconciler) ensureVLLMServerDeployment(
+	ctx context.Context,
+	vllmService *inferencev1alpha1.VLLMService,
+) error {
+	key := client.ObjectKey{
+		Name:      vllmServerDeploymentName(vllmService),
+		Namespace: vllmService.Namespace,
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, key, deployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get Deployment %s: %w", key, err)
+		}
+
+		deployment = newVLLMServerDeployment(vllmService)
+
+		if err := controllerutil.SetControllerReference(
+			vllmService,
+			deployment,
+			r.Scheme,
+		); err != nil {
+			return fmt.Errorf(
+				"failed to set VLLMService as Deployment owner: %w",
+				err,
+			)
+		}
+
+		if err := r.Create(ctx, deployment); err != nil {
+			return fmt.Errorf("failed to create Deployment %s: %w", key, err)
+		}
+
+		logf.FromContext(ctx).Info(
+			"Created Deployment",
+			"name", deployment.Name,
+			"namespace", deployment.Namespace,
+		)
+	}
+
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *VLLMServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&inferencev1alpha1.VLLMService{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Service{}).
+		Owns(&appsv1.Deployment{}).
 		Named("vllmservice").
 		Complete(r)
 }

@@ -17,6 +17,17 @@ rules:
   - update
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - inference.psuri-github.github.io
   resources:
   - vllmservices
