@@ -379,6 +379,148 @@ var _ = Describe("VLLMService Controller", func() {
 			_, err = controllerReconciler.Reconcile(ctx, request)
 			Expect(err).NotTo(HaveOccurred())
 		})
+		It("should reject a same-named Service that it does not control", func() {
+			By("Creating a same-named Service without a controller owner reference")
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: resourceNamespace,
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{
+							Name: "http",
+							Port: 9000,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(
+				"is not controlled by VLLMService",
+			))
+
+			By("Confirming that the conflicting Service was not modified")
+			existingService := &corev1.Service{}
+			serviceKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			Expect(k8sClient.Get(ctx, serviceKey, existingService)).To(Succeed())
+			Expect(existingService.OwnerReferences).To(BeEmpty())
+			Expect(existingService.Spec.Ports).To(HaveLen(1))
+			Expect(existingService.Spec.Ports[0].Port).To(Equal(int32(9000)))
+		})
+		It("should repair vLLM Service drift while preserving API-server fields", func() {
+			controllerReconciler := &VLLMServiceReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			request := reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			}
+
+			By("Creating the vLLM Service")
+			_, err := controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			serviceKey := types.NamespacedName{
+				Name:      resourceName,
+				Namespace: resourceNamespace,
+			}
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, serviceKey, service)).To(Succeed())
+
+			originalClusterIP := service.Spec.ClusterIP
+			originalClusterIPs := append([]string(nil), service.Spec.ClusterIPs...)
+
+			By("Introducing label, type, selector, and port drift")
+			service.Labels["team"] = "ai-platform"
+			service.Labels["app.kubernetes.io/managed-by"] = "manual-change"
+			delete(service.Labels, "app.kubernetes.io/component")
+
+			service.Spec.Type = corev1.ServiceTypeNodePort
+			service.Spec.Selector = map[string]string{
+				"unexpected": "selector",
+			}
+			service.Spec.Ports[0].Name = "unexpected"
+			service.Spec.Ports[0].Port = 9000
+
+			Expect(k8sClient.Update(ctx, service)).To(Succeed())
+
+			By("Changing the desired port on the VLLMService")
+			Expect(k8sClient.Get(ctx, typeNamespacedName, vllmservice)).To(Succeed())
+			vllmservice.Spec.Port = 8080
+			Expect(k8sClient.Update(ctx, vllmservice)).To(Succeed())
+
+			By("Reconciling the drifted Service")
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			updatedService := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, serviceKey, updatedService)).To(Succeed())
+
+			Expect(updatedService.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/name",
+				"vllm",
+			))
+			Expect(updatedService.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/instance",
+				resourceName,
+			))
+			Expect(updatedService.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/component",
+				"server",
+			))
+			Expect(updatedService.Labels).To(HaveKeyWithValue(
+				"app.kubernetes.io/managed-by",
+				"vllm-operator",
+			))
+			Expect(updatedService.Labels).To(HaveKeyWithValue(
+				"team",
+				"ai-platform",
+			))
+
+			Expect(updatedService.Spec.Type).To(Equal(
+				corev1.ServiceTypeClusterIP,
+			))
+			Expect(updatedService.Spec.Selector).To(Equal(map[string]string{
+				"app.kubernetes.io/name":      "vllm",
+				"app.kubernetes.io/instance":  resourceName,
+				"app.kubernetes.io/component": "server",
+			}))
+
+			Expect(updatedService.Spec.Ports).To(HaveLen(1))
+			servicePort := updatedService.Spec.Ports[0]
+			Expect(servicePort.Name).To(Equal("http"))
+			Expect(servicePort.Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(servicePort.Port).To(Equal(int32(8080)))
+			Expect(servicePort.TargetPort.String()).To(Equal("http"))
+
+			Expect(updatedService.Spec.ClusterIP).To(Equal(originalClusterIP))
+			Expect(updatedService.Spec.ClusterIPs).To(Equal(originalClusterIPs))
+
+			By("Reconciling again without any drift")
+			resourceVersion := updatedService.ResourceVersion
+
+			_, err = controllerReconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+
+			reconciledAgain := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, serviceKey, reconciledAgain)).To(Succeed())
+			Expect(reconciledAgain.ResourceVersion).To(Equal(resourceVersion))
+		})
 	})
 
 	Context("When reconciling a resource that does not exist", func() {

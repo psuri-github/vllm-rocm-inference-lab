@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -331,6 +332,65 @@ func (r *VLLMServiceReconciler) ensureVLLMServerService(
 			"namespace", service.Namespace,
 		)
 	}
+
+	if !metav1.IsControlledBy(service, vllmService) {
+		return fmt.Errorf(
+			"existing Service %s is not controlled by VLLMService %s/%s",
+			key,
+			vllmService.Namespace,
+			vllmService.Name,
+		)
+	}
+
+	desiredService := newVLLMServerService(vllmService)
+	original := service.DeepCopy()
+	serviceChanged := false
+
+	if service.Labels == nil {
+		service.Labels = map[string]string{}
+	}
+
+	for labelKey, labelValue := range desiredService.Labels {
+		if service.Labels[labelKey] != labelValue {
+			service.Labels[labelKey] = labelValue
+			serviceChanged = true
+		}
+	}
+
+	if service.Spec.Type != desiredService.Spec.Type {
+		service.Spec.Type = desiredService.Spec.Type
+		serviceChanged = true
+	}
+
+	if !apiequality.Semantic.DeepEqual(
+		service.Spec.Selector,
+		desiredService.Spec.Selector,
+	) {
+		service.Spec.Selector = desiredService.Spec.Selector
+		serviceChanged = true
+	}
+
+	if !apiequality.Semantic.DeepEqual(
+		service.Spec.Ports,
+		desiredService.Spec.Ports,
+	) {
+		service.Spec.Ports = desiredService.Spec.Ports
+		serviceChanged = true
+	}
+
+	if !serviceChanged {
+		return nil
+	}
+
+	if err := r.Patch(ctx, service, client.MergeFrom(original)); err != nil {
+		return fmt.Errorf("failed to patch Service %s: %w", key, err)
+	}
+
+	logf.FromContext(ctx).Info(
+		"Updated Service",
+		"name", service.Name,
+		"namespace", service.Namespace,
+	)
 
 	return nil
 }
